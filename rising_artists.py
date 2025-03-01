@@ -87,7 +87,6 @@ def get_tracking_entries():
         entry_id = page.get("id")
         props = page.get("properties", {})
         pop = props.get("Popularity Score", {}).get("number")
-        # Versuche zuerst "Date created", sonst nutze created_time
         date_str = props.get("Date created", {}).get("date", {}).get("start")
         if not date_str:
             date_str = page.get("created_time")
@@ -397,8 +396,8 @@ Popularity: {row['last_popularity']:.1f} | Growth: {row['growth']:.1f}%""")
             if spotify_link:
                 st.markdown(f"[Spotify Link]({spotify_link})")
             with st.expander(f"{row['track_name']} - {row['artist']} anzeigen"):
-                # Alle Messungen, die dieselbe Song-ID haben, chronologisch sortiert
-                song_history = df_all[df_all["song_id"] == row["song_id"]].sort_values("date", ascending=True).copy()
+                # Verwende nun die Notion Track ID, um alle Messungen (über alle Seiten) abzurufen
+                song_history = df_all[df_all["notion_track_id"] == metadata.get(row["song_id"], {}).get("notion_track_id", row["song_id"])].sort_values("date", ascending=True).copy()
                 if song_history["date"].duplicated().any():
                     song_history["date_adjusted"] = song_history.groupby("date").cumcount().apply(lambda x: datetime.timedelta(seconds=x))
                     song_history["date_adjusted"] = song_history["date"] + song_history["date_adjusted"]
@@ -413,9 +412,8 @@ Popularity: {row['last_popularity']:.1f} | Growth: {row['growth']:.1f}%""")
                                   title=f"{row['track_name']} - {row['artist']}",
                                   labels={"date_adjusted": "Datum", "popularity": "Popularity Score"},
                                   markers=True)
-                # Fixiere die y-Achse auf 0 bis 100
                 fig.update_yaxes(range=[0, 100])
-                # Nutze einen dynamischen Schlüssel, damit der Graph bei jedem Öffnen neu geladen wird
+                # Dynamischer Schlüssel für Neuladen beim Öffnen
                 st.plotly_chart(fig, use_container_width=True, key=f"chart_{row['song_id']}_{time.time()}")
 else:
     st.write("Bitte verwenden Sie das Filterformular in der Sidebar, um Ergebnisse anzuzeigen.")
