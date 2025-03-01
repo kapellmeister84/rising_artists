@@ -83,7 +83,6 @@ def get_tracking_entries():
         entry_id = page.get("id")
         props = page.get("properties", {})
         pop = props.get("Popularity Score", {}).get("number")
-        # Hier wird das Property "Date" ausgelesen (z. B. "2025/03/01 19:18" oder als ISO-String)
         date_str = props.get("Date", {}).get("date", {}).get("start")
         song_relations = props.get("Song", {}).get("relation", [])
         for relation in song_relations:
@@ -128,10 +127,8 @@ def get_metadata_from_tracking_db():
         if song_relations:
             related_page_id = song_relations[0].get("id")
             track_name = track_names.get(related_page_id, "Unbekannter Track")
-            # Hier holen wir den Wert aus dem Property "Track ID" – das ist nun die Notion Track ID
             notion_track_id = get_track_id_from_page(related_page_id)
-            # Für Cover und Spotify-Link nutzen wir weiterhin den gleichen Wert (falls vorhanden)
-            spotify_track_id = notion_track_id  
+            spotify_track_id = notion_track_id  # Wir nutzen denselben Wert
             key = related_page_id
         else:
             track_name = "Unbekannter Track"
@@ -156,7 +153,6 @@ def get_new_music():
     st.write("Rufe neue Musik aus Playlisten ab...")
     progress_bar = st.progress(0)
     status_text = st.empty()
-    # Simulation: Abruf von 5 Songs
     song_list = ["Song A", "Song B", "Song C", "Song D", "Song E"]
     for i, song in enumerate(song_list):
         status_text.text(f"Rufe {song} ab...")
@@ -230,7 +226,6 @@ def update_popularity():
             }
         }
         requests.post(notion_page_endpoint, headers=notion_headers, json=payload)
-        # Keine Ausgabe
 
     song_pages = get_all_song_page_ids()
     total = len(song_pages)
@@ -241,7 +236,6 @@ def update_popularity():
         status_text.text(f"Verarbeite Song: {song_name}")
         if not song_name:
             continue
-        # Verwende als Schlüssel die Seiten-ID – so bleibt für denselben Song immer dieselbe ID erhalten.
         if page_id not in song_to_track:
             track_id = get_track_id_from_page(page_id)
             if not track_id:
@@ -286,7 +280,6 @@ if df.empty:
     st.write("Keine Tracking-Daten gefunden.")
     st.stop()
 
-# Datum parsen – hier ohne explizites Format, damit automatisch erkannt wird
 df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.tz_localize(None)
 df["track_name"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("track_name", "Unbekannter Track"))
 df["artist"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("artist", "Unbekannt"))
@@ -294,7 +287,6 @@ df["release_date"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("releas
 df["spotify_track_id"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("spotify_track_id", ""))
 df["notion_track_id"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("notion_track_id", x))
 
-# Verwende alle Messungen (nicht nur 2 Tage zurück)
 df_all = df[df["date"].notnull()]
 
 cumulative = []
@@ -324,7 +316,6 @@ if cum_df.empty:
 else:
     top10 = cum_df.sort_values("cumulative_growth", ascending=False).head(10)
 
-# Erzeuge ein Grid via st.columns (5 Spalten) für die Top 10
 num_columns = 5
 rows = [top10.iloc[i:i+num_columns] for i in range(0, len(top10), num_columns)]
 for row_df in rows:
@@ -404,19 +395,19 @@ Popularity: {row['last_popularity']:.1f} | Growth: {row['growth']:.1f}%""")
                 st.image(cover_url, width=100)
             if spotify_link:
                 st.markdown(f"[Spotify Link]({spotify_link})")
-            # Hier wird der Graph anhand der Notion Track ID gefiltert
             with st.expander(f"{row['track_name']} - {row['artist']} anzeigen"):
-                # Sortiere explizit aufsteigend nach Datum (älteste Messung zuerst, neueste zuletzt)
+                # Hier werden alle Messungen für dieselbe Notion Track ID (über alle Seiten) angezeigt,
+                # sortiert von der ältesten bis zur neuesten Messung.
                 song_history = df_all[df_all["notion_track_id"] == row["notion_track_id"]].sort_values("date", ascending=True)
                 if len(song_history) == 1:
                     fig = px.scatter(song_history, x="date", y="popularity",
-                         title=f"{row['track_name']} - {row['artist']}",
-                         labels={"date": "Datum", "popularity": "Popularity Score"})
-    else:
-        fig = px.line(song_history, x="date", y="popularity",
-                      title=f"{row['track_name']} - {row['artist']}",
-                      labels={"date": "Datum", "popularity": "Popularity Score"},
-                      markers=True)
-    st.plotly_chart(fig, use_container_width=True, key=f"chart_{row['notion_track_id']}")
+                                     title=f"{row['track_name']} - {row['artist']}",
+                                     labels={"date": "Datum", "popularity": "Popularity Score"})
+                else:
+                    fig = px.line(song_history, x="date", y="popularity",
+                                  title=f"{row['track_name']} - {row['artist']}",
+                                  labels={"date": "Datum", "popularity": "Popularity Score"},
+                                  markers=True)
+                st.plotly_chart(fig, use_container_width=True, key=f"chart_{row['notion_track_id']}")
 else:
     st.write("Bitte verwenden Sie das Filterformular in der Sidebar, um Ergebnisse anzuzeigen.")
