@@ -6,8 +6,7 @@ import pandas as pd
 import plotly.express as px
 
 # === Notion Konfiguration ===
-# Diese Datenbank enthält jetzt Artist Name, track name und Release Date
-songs_database_id = "b94c8042619d42a3be799c9795984150"  
+songs_database_id = "b94c8042619d42a3be799c9795984150"  # Songs-Datenbank (enthält Track Name, Artist Name, Release Date)
 week_database_id = "1a9b6204cede80e29338ede2c76999f2"    # Week-Tracking-Datenbank
 notion_secret = "secret_yYvZbk7zcKy0Joe3usdCHMbbZmAFHnCKrF7NvEkWY6E"
 notion_query_endpoint = "https://api.notion.com/v1/databases"
@@ -37,7 +36,7 @@ def get_week_entries():
             entries.append({"song_id": song_id, "date": date_str, "popularity": pop})
     return entries
 
-# Lade Song-Metadaten (track name, Artist Name, Release Date) aus der Songs-Datenbank
+# Lade Song-Metadaten (Track Name, Artist Name, Release Date) aus der Songs-Datenbank
 def get_song_metadata():
     url = f"{notion_query_endpoint}/{songs_database_id}/query"
     response = requests.post(url, headers=notion_headers)
@@ -47,11 +46,11 @@ def get_song_metadata():
     for page in data.get("results", []):
         page_id = page.get("id")
         props = page.get("properties", {})
-        # track name: Alle Textfragmente zusammenfügen
-        if "track name" in props and "title" in props["track name"]:
-            song_name = "".join([t.get("plain_text", "") for t in props["track name"]["title"]]).strip()
+        # Track Name: Alle Textfragmente zusammenfügen
+        if "Track Name" in props and "title" in props["Track Name"]:
+            track_name = "".join([t.get("plain_text", "") for t in props["Track Name"]["title"]]).strip()
         else:
-            song_name = "Unbekannter Song"
+            track_name = "Unbekannter Track"
         # Artist Name: Alle Textfragmente zusammenfügen
         if "Artist Name" in props and "rich_text" in props["Artist Name"]:
             artist = "".join([t.get("plain_text", "") for t in props["Artist Name"]["rich_text"]]).strip()
@@ -62,7 +61,7 @@ def get_song_metadata():
             release_date = props["Release Date"]["date"].get("start", "")
         else:
             release_date = ""
-        metadata[page_id] = {"song_name": song_name, "artist": artist, "release_date": release_date}
+        metadata[page_id] = {"track_name": track_name, "artist": artist, "release_date": release_date}
     st.write("Abgerufene Song-Metadaten:", metadata)
     return metadata
 
@@ -92,7 +91,7 @@ if df.empty:
 # Konvertiere das Datum in datetime (mit Fehlerbehandlung)
 df["date"] = pd.to_datetime(df["date"], errors="coerce")
 # Füge Song-Metadaten hinzu (tatsächliche Namen aus der Songs-Datenbank)
-df["song_name"] = df["song_id"].map(lambda x: song_metadata.get(x, {}).get("song_name", "Unbekannter Song"))
+df["track_name"] = df["song_id"].map(lambda x: song_metadata.get(x, {}).get("track_name", "Unbekannter Track"))
 df["artist"] = df["song_id"].map(lambda x: song_metadata.get(x, {}).get("artist", "Unbekannt"))
 df["release_date"] = df["song_id"].map(lambda x: song_metadata.get(x, {}).get("release_date", ""))
 
@@ -106,10 +105,10 @@ for song_id, group in df.groupby("song_id"):
         prev_pop = group.iloc[-2]["popularity"]
         if prev_pop != 0:
             growth = ((last_pop - prev_pop) / prev_pop) * 100
-    meta = song_metadata.get(song_id, {"song_name": "Unbekannter Song", "artist": "Unbekannt", "release_date": ""})
+    meta = song_metadata.get(song_id, {"track_name": "Unbekannter Track", "artist": "Unbekannt", "release_date": ""})
     last_data.append({
         "song_id": song_id,
-        "song_name": meta["song_name"],
+        "track_name": meta["track_name"],
         "artist": meta["artist"],
         "release_date": meta["release_date"],
         "last_popularity": last_pop,
@@ -132,7 +131,7 @@ elif sort_option == "Release Date":
     filtered_df = filtered_df.sort_values("release_date_dt", ascending=True)
 
 st.write("Gefilterte Songs:")
-st.dataframe(filtered_df[["song_name", "artist", "last_popularity", "release_date", "growth"]])
+st.dataframe(filtered_df[["track_name", "artist", "last_popularity", "release_date", "growth"]])
 
 # Zeitraum-Filter: Berechne start_time als timezone-aware Timestamp in UTC
 now = pd.Timestamp.now(tz='UTC')
@@ -145,16 +144,16 @@ for idx, row in filtered_df.iterrows():
     # Filtere die Tracking-History nach dem gewählten Zeitraum
     song_history = df[(df["song_id"] == song_id) & (df["date"] >= start_time)].sort_values("date")
     if song_history.empty:
-        st.write(f"Keine Tracking-Daten für {row['song_name']} im gewählten Zeitraum.")
+        st.write(f"Keine Tracking-Daten für {row['track_name']} im gewählten Zeitraum.")
         continue
     # Wenn nur ein Messwert vorhanden ist, als Scatter-Plot darstellen
     if len(song_history) == 1:
         fig = px.scatter(song_history, x="date", y="popularity",
-                         title=f"{row['song_name']} - {row['artist']}",
+                         title=f"{row['track_name']} - {row['artist']}",
                          labels={"date": "Datum", "popularity": "Popularity Score"})
     else:
         fig = px.line(song_history, x="date", y="popularity",
-                      title=f"{row['song_name']} - {row['artist']}",
+                      title=f"{row['track_name']} - {row['artist']}",
                       labels={"date": "Datum", "popularity": "Popularity Score"},
                       markers=True)
     st.plotly_chart(fig, use_container_width=True, key=f"chart_{song_id}")
