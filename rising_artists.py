@@ -250,7 +250,7 @@ scheduler_thread = threading.Thread(target=scheduler_loop, daemon=True)
 scheduler_thread.start()
 
 st.title("Notion Spotify Sync Scheduler")
-st.write("Diese App startet jeden Freitag um 00:01 den 'Sync Songs with Spotify'-Task und täglich um 00:01 sowie 17:00 den 'Create Week Entries'-Task automatisch im Hintergrund.")
+st.write("Diese App startet jeden Freitag um 00:01 den 'New Music Friday Sync'-Task und täglich um 00:01 sowie 17:00 den 'Track Analytics'-Task automatisch im Hintergrund.")
 st.write("Du kannst die Tasks auch manuell über die Buttons unten starten:")
 
 if st.button("New Music Friday Sync"):
