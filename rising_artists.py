@@ -2,30 +2,31 @@ import streamlit as st
 import requests
 import datetime
 import json
+import time
 import pandas as pd
 import plotly.express as px
 from concurrent.futures import ThreadPoolExecutor
+import re
 
 st.set_page_config(layout="wide")
 
 # === Notion-Konfiguration ===
-tracking_db_id = "1a9b6204cede80e29338ede2c76999f2"  # Tracking-Datenbank (enthält Rollups für "Artist" und "Release Date", Relation "Song")
+weeks_db_id = "1a9b6204cede80e29338ede2c76999f2"  # Weeks-Datenbank (enthält "Date", "Popularity Score", "Track Code" und Relation "Song")
 notion_secret = "secret_yYvZbk7zcKy0Joe3usdCHMbbZmAFHnCKrF7NvEkWY6E"
-notion_query_endpoint = "https://api.notion.com/v1/databases"
 notion_page_endpoint = "https://api.notion.com/v1/pages"
+notion_query_endpoint = "https://api.notion.com/v1/databases"
 notion_headers = {
     "Authorization": f"Bearer {notion_secret}",
     "Content-Type": "application/json",
     "Notion-Version": "2022-06-28"
 }
 
-# === Spotify-Konfiguration ===
+# === Spotify-Konfiguration (falls benötigt) ===
 def get_spotify_token():
     url = "https://open.spotify.com/get_access_token?reason=transport&productType=web_player"
     response = requests.get(url)
     response.raise_for_status()
     return response.json().get("accessToken")
-
 SPOTIFY_TOKEN = get_spotify_token()
 
 # --- Hilfsfunktionen ---
@@ -71,8 +72,8 @@ def update_growth_for_measurement(entry_id, growth):
     response.raise_for_status()
 
 def get_tracking_entries():
-    """Popularity muss aktuell sein, daher kein Caching."""
-    url = f"{notion_query_endpoint}/{tracking_db_id}/query"
+    """Holt alle Einträge aus der Weeks-Datenbank."""
+    url = f"{notion_query_endpoint}/{weeks_db_id}/query"
     response = requests.post(url, headers=notion_headers)
     response.raise_for_status()
     data = response.json()
@@ -90,7 +91,7 @@ def get_tracking_entries():
 
 @st.cache_data(show_spinner=False)
 def get_spotify_data(spotify_track_id):
-    """Liefert Cover und Spotify-Link (gecacht)."""
+    """Liefert Cover-URL und Spotify-Link für einen gegebenen Track (gecacht)."""
     url = f"https://api.spotify.com/v1/tracks/{spotify_track_id}"
     response = requests.get(url, headers={"Authorization": f"Bearer {SPOTIFY_TOKEN}"})
     if response.status_code == 200:
@@ -104,8 +105,8 @@ def get_spotify_data(spotify_track_id):
 
 @st.cache_data(show_spinner=False)
 def get_metadata_from_tracking_db():
-    """Artist, Release Date, Track ID etc. (gecacht)."""
-    url = f"{notion_query_endpoint}/{tracking_db_id}/query"
+    """Liest Metadaten (Track Name, Artist, Release Date, Spotify Track ID) aus der Weeks-Datenbank."""
+    url = f"{notion_query_endpoint}/{weeks_db_id}/query"
     response = requests.post(url, headers=notion_headers)
     response.raise_for_status()
     data = response.json()
@@ -114,16 +115,16 @@ def get_metadata_from_tracking_db():
         futures = {}
         for page in data.get("results", []):
             props = page.get("properties", {})
-            song_relations = props.get("Song", {}).get("relation", [])
-            if song_relations:
-                related_page_id = song_relations[0].get("id")
+            song_rel = props.get("Song", {}).get("relation", [])
+            if song_rel:
+                related_page_id = song_rel[0].get("id")
                 futures[related_page_id] = executor.submit(get_track_name_from_page, related_page_id)
         track_names = {key: future.result() for key, future in futures.items()}
     for page in data.get("results", []):
         props = page.get("properties", {})
-        song_relations = props.get("Song", {}).get("relation", [])
-        if song_relations:
-            related_page_id = song_relations[0].get("id")
+        song_rel = props.get("Song", {}).get("relation", [])
+        if song_rel:
+            related_page_id = song_rel[0].get("id")
             track_name = track_names.get(related_page_id, "Unbekannter Track")
             spotify_track_id = get_track_id_from_page(related_page_id)
             key = related_page_id
@@ -143,16 +144,119 @@ def get_metadata_from_tracking_db():
         }
     return metadata
 
-# --- Platzhalterfunktionen für Buttons ---
+# Neue Funktion: Erstelle einen neuen Messungseintrag in der Weeks-Datenbank
+def create_new_measurement(song_id, popularity, code):
+    """
+    Legt einen neuen Eintrag in der Weeks-Datenbank an.
+    Das Title-Property "Track Code" wird mit dem eindeutigen Code befüllt.
+    """
+    now_str = datetime.datetime.now().strftime("%Y/%m/%d %H:%M")
+    payload = {
+        "parent": {"database_id": weeks_db_id},
+        "properties": {
+            "Track Code": {
+                "title": [
+                    {"text": {"content": code}}
+                ]
+            },
+            "Song": {
+                "relation": [{"id": song_id}]
+            },
+            "Popularity Score": {"number": popularity},
+            "Date": {
+                "date": {"start": now_str}
+            }
+        }
+    }
+    response = requests.post(notion_page_endpoint, headers=notion_headers, data=json.dumps(payload))
+    if response.status_code == 200:
+        st.write(f"Neuer Eintrag für Song {song_id} mit Code '{code}' erstellt.")
+    else:
+        st.error(f"Fehler beim Erstellen eines Eintrags: {response.text}")
+
+# Update Popularity: Legt für jeden Song einen neuen Messwert mit einem Code an – pro Artist ein eindeutiger Code
+def update_popularity():
+    st.write("Füge neue Popularity-Messung hinzu...")
+    # Zunächst holen wir die Metadaten, um den Artist zu ermitteln
+    metadata = get_metadata_from_tracking_db()
+    # Wir speichern pro Artist den generierten Code in einem Dictionary
+    codes = {}
+    run_time = datetime.datetime.now().strftime("%Y%m%d-%H%M")
+    # Beispiel-Dummy-Songs mit gültigen UUIDs
+    example_songs = [
+        {"song_id": "123e4567-e89b-12d3-a456-426614174000", "pop": 15},
+        {"song_id": "123e4567-e89b-12d3-a456-426614174001", "pop": 20}
+    ]
+    for s in example_songs:
+        # Ermittle den Artist des Songs
+        artist = metadata.get(s["song_id"], {}).get("artist", "Unknown")
+        # Ersetze Leerzeichen und Sonderzeichen im Artistnamen, damit der Code sauber ist
+        sanitized_artist = re.sub(r'\W+', '', artist)
+        # Falls für diesen Artist noch kein Code generiert wurde, generiere einen neuen
+        if sanitized_artist not in codes:
+            codes[sanitized_artist] = "TrackCode-" + sanitized_artist + "-" + run_time
+        code = codes[sanitized_artist]
+        create_new_measurement(song_id=s["song_id"], popularity=s["pop"], code=code)
+        time.sleep(0.3)
+    st.success("Popularity wurde aktualisiert. Neue Einträge wurden mit den folgenden Codes erstellt: " + ", ".join(codes.values()))
+
+@st.cache_data(show_spinner=False)
+def get_weeks_entries():
+    """
+    Holt alle Einträge aus der Weeks-Datenbank und liefert eine Liste von Dictionaries mit:
+      - track_code (aus Title-Property "Track Code")
+      - song_id (Relation "Song")
+      - popularity (Popularity Score)
+      - date_str (aus Date)
+    """
+    url = f"{notion_query_endpoint}/{weeks_db_id}/query"
+    response = requests.post(url, headers=notion_headers)
+    response.raise_for_status()
+    data = response.json()
+    results = []
+    for page in data.get("results", []):
+        page_id = page["id"]
+        props = page["properties"]
+        track_code_prop = props.get("Track Code", {}).get("title", [])
+        code_str = track_code_prop[0]["plain_text"] if track_code_prop else ""
+        song_rel = props.get("Song", {}).get("relation", [])
+        song_id = song_rel[0]["id"] if song_rel else None
+        pop_score = props.get("Popularity Score", {}).get("number")
+        date_str = props.get("Date", {}).get("date", {}).get("start")
+        results.append({
+            "page_id": page_id,
+            "track_code": code_str,
+            "song_id": song_id,
+            "popularity": pop_score,
+            "date_str": date_str
+        })
+    return results
+
+# Neue Funktion: Baut einen Graphen, der alle Einträge (Messungen) mit einem bestimmten Code anzeigt
+def build_code_graph(code):
+    data = get_weeks_entries()
+    df_code = [r for r in data if r["track_code"] == code]
+    if not df_code:
+        return None
+    df = pd.DataFrame(df_code)
+    df["date"] = pd.to_datetime(df["date_str"], errors="coerce")
+    df = df.sort_values("date")
+    if df["date"].nunique() <= 1:
+        fig = px.scatter(df, x="date", y="popularity",
+                         title=f"Messungen für Code {code}",
+                         labels={"date": "Datum", "popularity": "Popularity Score"})
+    else:
+        fig = px.line(df, x="date", y="popularity",
+                      title=f"Messungen für Code {code}",
+                      labels={"date": "Datum", "popularity": "Popularity Score"},
+                      markers=True)
+    return fig
+
+# --- Platzhalter für weitere Funktionen (z. B. Get New Music) ---
 def get_new_music():
     st.write("Rufe neue Musik aus Playlisten ab...")
     # Hier deinen Code einfügen...
     st.success("Neue Musik wurde hinzugefügt!")
-
-def update_popularity():
-    st.write("Füge neue Popularity-Messung hinzu...")
-    # Hier deinen Code einfügen...
-    st.success("Popularity wurde aktualisiert!")
 
 # --- Sidebar: Buttons und Filterformular ---
 with st.sidebar:
@@ -174,8 +278,8 @@ with st.sidebar:
 
 st.title("Song Tracking Übersicht")
 
-# 1. Oben: Top 10 Songs mit größtem kumulativem Wachstum über 2 Tage
-st.header("Top 10 Songs – Wachstum über 2 Tage")
+# 1. Oben: Top 10 Songs – Hier wird für jeden Song das kumulative Wachstum über alle Messungen berechnet
+st.header("Top 10 Songs – Wachstum über alle Messungen")
 
 tracking_entries = get_tracking_entries()
 metadata = get_metadata_from_tracking_db()
@@ -185,18 +289,18 @@ if df.empty:
     st.write("Keine Tracking-Daten gefunden.")
     st.stop()
 
-df["date"] = pd.to_datetime(df["date"], errors="coerce")
+# Datum parsen – automatische Erkennung, dann tz-naiv
+df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.tz_localize(None)
 df["track_name"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("track_name", "Unbekannter Track"))
 df["artist"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("artist", "Unbekannt"))
 df["release_date"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("release_date", ""))
 df["spotify_track_id"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("spotify_track_id", ""))
 
-now = pd.Timestamp.now(tz='UTC')
-start_2days = now - pd.Timedelta(days=2)
-df_2days = df[df["date"] >= start_2days]
+# Verwende alle Einträge mit gültigen Datumseinträgen
+df_all = df[df["date"].notnull()]
 
 cumulative = []
-for song_id, group in df_2days.groupby("song_id"):
+for song_id, group in df_all.groupby("song_id"):
     group = group.sort_values("date")
     if group.empty:
         continue
@@ -213,9 +317,12 @@ for song_id, group in df_2days.groupby("song_id"):
         "last_popularity": last_pop,
         "cumulative_growth": growth
     })
-
 cum_df = pd.DataFrame(cumulative)
-top10 = cum_df.sort_values("cumulative_growth", ascending=False).head(10)
+if cum_df.empty:
+    st.write("Keine Daten für die Top 10 verfügbar.")
+    top10 = pd.DataFrame()
+else:
+    top10 = cum_df.sort_values("cumulative_growth", ascending=False).head(10)
 
 # Erzeuge ein Grid via st.columns (5 Spalten) für die Top 10
 num_columns = 5
@@ -223,7 +330,7 @@ rows = [top10.iloc[i:i+num_columns] for i in range(0, len(top10), num_columns)]
 for row_df in rows:
     cols = st.columns(num_columns)
     for idx, (_, row) in enumerate(row_df.iterrows()):
-        cover_url, spotify_link = "", ""
+        cover_url, spotify_link = ("", "")
         if row["spotify_track_id"]:
             cover_url, spotify_link = get_spotify_data(row["spotify_track_id"])
         with cols[idx]:
@@ -241,26 +348,26 @@ for row_df in rows:
                 st.markdown(f"<div style='text-align: center;'><a href='{spotify_link}' target='_blank'>Spotify Link</a></div>", unsafe_allow_html=True)
             st.markdown(f"<div style='text-align: center; font-weight: bold;'>Growth: {row['cumulative_growth']:.1f}%</div>", unsafe_allow_html=True)
 
-# 2. Unterhalb: Ergebnisse erst anzeigen, wenn Filter gesetzt wurden
+# 2. Unterhalb: Filterergebnisse – Hier wird im Expander der Graph für einen bestimmten Code angezeigt
 st.header("Songs filtern")
 
 if submitted:
     last_data = []
-    for song_id, group in df.groupby("song_id"):
+    for song_id, group in df_all.groupby("song_id"):
         group = group.sort_values("date")
         last_pop = group.iloc[-1]["popularity"]
         growth_val = 0.0
         if len(group) >= 2:
             prev_pop = group.iloc[-2]["popularity"]
-            if prev_pop != 0:
+            if prev_pop and prev_pop != 0:
                 growth_val = ((last_pop - prev_pop) / prev_pop) * 100
         meta = metadata.get(song_id, {"track_name": "Unbekannter Track", "artist": "Unbekannt", "release_date": "", "spotify_track_id": ""})
         last_data.append({
             "song_id": song_id,
-            "track_name": meta["track_name"],
-            "artist": meta["artist"],
-            "release_date": meta["release_date"],
-            "spotify_track_id": meta["spotify_track_id"],
+            "track_name": meta.get("track_name", "Unbekannter Track"),
+            "artist": meta.get("artist", "Unbekannt"),
+            "release_date": meta.get("release_date", ""),
+            "spotify_track_id": meta.get("spotify_track_id", ""),
             "last_popularity": last_pop,
             "growth": growth_val
         })
@@ -285,7 +392,7 @@ if submitted:
     
     st.write("Gefilterte Songs:")
     for idx, row in filtered_df.iterrows():
-        cover_url, spotify_link = "", ""
+        cover_url, spotify_link = ("", "")
         if row["spotify_track_id"]:
             cover_url, spotify_link = get_spotify_data(row["spotify_track_id"])
         with st.container():
@@ -297,16 +404,58 @@ Popularity: {row['last_popularity']:.1f} | Growth: {row['growth']:.1f}%""")
             if spotify_link:
                 st.markdown(f"[Spotify Link]({spotify_link})")
             with st.expander(f"{row['track_name']} - {row['artist']} anzeigen"):
-                song_history = df[df["song_id"] == row["song_id"]].sort_values("date")
-                if len(song_history) == 1:
-                    fig = px.scatter(song_history, x="date", y="popularity",
-                                     title=f"{row['track_name']} - {row['artist']}",
-                                     labels={"date": "Datum", "popularity": "Popularity Score"})
-                else:
-                    fig = px.line(song_history, x="date", y="popularity",
-                                  title=f"{row['track_name']} - {row['artist']}",
-                                  labels={"date": "Datum", "popularity": "Popularity Score"},
-                                  markers=True)
-                st.plotly_chart(fig, use_container_width=True, key=f"chart_{row['song_id']}")
+                # Hier gibt der User den Code ein, mit dem die Messungen gruppiert wurden
+                code_input = st.text_input("Code für Messungen eingeben", key=f"code_{row['song_id']}")
+                if code_input:
+                    fig = build_code_graph(code_input)
+                    if fig is not None:
+                        st.plotly_chart(fig, use_container_width=True, key=f"chart_{row['song_id']}")
+                    else:
+                        st.write("Keine Messungen für diesen Code gefunden.")
 else:
     st.write("Bitte verwenden Sie das Filterformular in der Sidebar, um Ergebnisse anzuzeigen.")
+
+# Neue Funktion: Baut einen Graphen, der alle Einträge (Messungen) mit einem bestimmten Code anzeigt
+def build_code_graph(code):
+    data = get_weeks_entries()
+    df_code = [r for r in data if r["track_code"] == code]
+    if not df_code:
+        return None
+    df = pd.DataFrame(df_code)
+    df["date"] = pd.to_datetime(df["date_str"], errors="coerce")
+    df = df.sort_values("date")
+    if df["date"].nunique() <= 1:
+        fig = px.scatter(df, x="date", y="popularity",
+                         title=f"Messungen für Code {code}",
+                         labels={"date": "Datum", "popularity": "Popularity Score"})
+    else:
+        fig = px.line(df, x="date", y="popularity",
+                      title=f"Messungen für Code {code}",
+                      labels={"date": "Datum", "popularity": "Popularity Score"},
+                      markers=True)
+    return fig
+
+@st.cache_data(show_spinner=False)
+def get_weeks_entries():
+    url = f"{notion_query_endpoint}/{weeks_db_id}/query"
+    response = requests.post(url, headers=notion_headers)
+    response.raise_for_status()
+    data = response.json()
+    results = []
+    for page in data.get("results", []):
+        page_id = page["id"]
+        props = page["properties"]
+        track_code_prop = props.get("Track Code", {}).get("title", [])
+        code_str = track_code_prop[0]["plain_text"] if track_code_prop else ""
+        song_rel = props.get("Song", {}).get("relation", [])
+        song_id = song_rel[0]["id"] if song_rel else None
+        pop_score = props.get("Popularity Score", {}).get("number")
+        date_str = props.get("Date", {}).get("date", {}).get("start")
+        results.append({
+            "page_id": page_id,
+            "track_code": code_str,
+            "song_id": song_id,
+            "popularity": pop_score,
+            "date_str": date_str
+        })
+    return results
