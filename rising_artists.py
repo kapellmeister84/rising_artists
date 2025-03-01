@@ -72,18 +72,35 @@ def update_growth_for_measurement(entry_id, growth):
     response = requests.patch(url, headers=notion_headers, data=json.dumps(data))
     response.raise_for_status()
 
-def get_tracking_entries():
-    """Holt Einträge aus der Tracking-Datenbank."""
+def get_all_tracking_pages():
+    """Lädt alle Seiten aus der Tracking-Datenbank per Pagination."""
     url = f"{notion_query_endpoint}/{tracking_db_id}/query"
-    response = requests.post(url, headers=notion_headers)
-    response.raise_for_status()
-    data = response.json()
+    payload = {}
+    pages = []
+    has_more = True
+    start_cursor = None
+    while has_more:
+        if start_cursor:
+            payload["start_cursor"] = start_cursor
+        response = requests.post(url, headers=notion_headers, json=payload)
+        response.raise_for_status()
+        data = response.json()
+        pages.extend(data.get("results", []))
+        has_more = data.get("has_more", False)
+        start_cursor = data.get("next_cursor")
+    return pages
+
+def get_tracking_entries():
+    """Holt Einträge aus der Tracking-Datenbank mittels Pagination.
+    Extrahiert Popularity Score, den Zeitstempel aus dem Property "Date" und die Song-ID aus der Relation "Song".
+    """
+    pages = get_all_tracking_pages()
     entries = []
-    for page in data.get("results", []):
+    for page in pages:
         entry_id = page.get("id")
         props = page.get("properties", {})
         pop = props.get("Popularity Score", {}).get("number")
-        # Hier wird das Property "Date" ausgelesen (z. B. "2025/03/01 19:18" oder als ISO-String)
+        # Das Property "Date" enthält den Zeitstempel der Messung
         date_str = props.get("Date", {}).get("date", {}).get("start")
         song_relations = props.get("Song", {}).get("relation", [])
         for relation in song_relations:
@@ -107,22 +124,19 @@ def get_spotify_data(spotify_track_id):
 
 @st.cache_data(show_spinner=False)
 def get_metadata_from_tracking_db():
-    """Liest Artist, Release Date, Track ID etc. aus der DB."""
-    url = f"{notion_query_endpoint}/{tracking_db_id}/query"
-    response = requests.post(url, headers=notion_headers)
-    response.raise_for_status()
-    data = response.json()
+    """Liest Artist, Release Date, Track ID etc. aus der Tracking-Datenbank."""
+    pages = get_all_tracking_pages()
     metadata = {}
     with ThreadPoolExecutor() as executor:
         futures = {}
-        for page in data.get("results", []):
+        for page in pages:
             props = page.get("properties", {})
             song_relations = props.get("Song", {}).get("relation", [])
             if song_relations:
                 related_page_id = song_relations[0].get("id")
                 futures[related_page_id] = executor.submit(get_track_name_from_page, related_page_id)
         track_names = {key: future.result() for key, future in futures.items()}
-    for page in data.get("results", []):
+    for page in pages:
         props = page.get("properties", {})
         song_relations = props.get("Song", {}).get("relation", [])
         if song_relations:
@@ -225,14 +239,12 @@ def update_popularity():
             }
         }
         requests.post(notion_page_endpoint, headers=notion_headers, json=payload)
-        # Keine Ausgabe
 
     song_pages = get_all_song_page_ids()
     total = len(song_pages)
     song_to_track = {}
     for idx, song in enumerate(song_pages):
         page_id = song["page_id"]
-        # Hole Songname – falls get_song_name den Seiten-ID zurückgibt, versuchen wir den gecachten Trackname
         song_name = get_song_name(page_id)
         if song_name == page_id:
             song_name = get_track_name_from_page(page_id)
@@ -251,6 +263,7 @@ def update_popularity():
     status_text.text("Alle Songs verarbeitet.")
     st.success("Popularity wurde aktualisiert!")
     status_text.empty()
+
 # --- Sidebar: Buttons und Filterformular ---
 with st.sidebar:
     st.markdown("## Automatische Updates")
@@ -276,7 +289,6 @@ st.header("Top 10 Songs – Wachstum über alle Messungen")
 
 tracking_entries = get_tracking_entries()
 metadata = get_metadata_from_tracking_db()
-
 df = pd.DataFrame(tracking_entries)
 if df.empty:
     st.write("Keine Tracking-Daten gefunden.")
@@ -288,8 +300,7 @@ df["track_name"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("track_na
 df["artist"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("artist", "Unbekannt"))
 df["release_date"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("release_date", ""))
 df["spotify_track_id"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("spotify_track_id", ""))
-
-# Verwende alle Messungen (nicht nur 2 Tage zurück)
+# Verwende alle Messwerte (nicht nur 2 Tage zurück)
 df_all = df[df["date"].notnull()]
 
 cumulative = []
@@ -318,7 +329,6 @@ if cum_df.empty:
 else:
     top10 = cum_df.sort_values("cumulative_growth", ascending=False).head(10)
 
-# Erzeuge ein Grid via st.columns (5 Spalten) für die Top 10
 num_columns = 5
 rows = [top10.iloc[i:i+num_columns] for i in range(0, len(top10), num_columns)]
 for row_df in rows:
@@ -344,7 +354,6 @@ for row_df in rows:
 
 # 2. Unterhalb: Filterergebnisse
 st.header("Songs filtern")
-
 if submitted:
     last_data = []
     for song_id, group in df_all.groupby("song_id"):
@@ -411,4 +420,3 @@ Popularity: {row['last_popularity']:.1f} | Growth: {row['growth']:.1f}%""")
                 st.plotly_chart(fig, use_container_width=True, key=f"chart_{row['song_id']}")
 else:
     st.write("Bitte verwenden Sie das Filterformular in der Sidebar, um Ergebnisse anzuzeigen.")
-
