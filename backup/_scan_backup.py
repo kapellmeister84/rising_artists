@@ -6,6 +6,7 @@ import time
 import pandas as pd
 import plotly.express as px
 from concurrent.futures import ThreadPoolExecutor
+import uuid
 
 st.set_page_config(layout="wide")
 
@@ -164,17 +165,92 @@ def update_popularity():
     st.write("Füge neue Popularity-Messung hinzu...")
     progress_bar = st.progress(0)
     status_text = st.empty()
-    update_steps = 5  # Beispiel: 5 Schritte
-    for i in range(update_steps):
-        status_text.text(f"Update Popularity: Schritt {i+1} von {update_steps}")
-        time.sleep(1)  # Simulation einer Verzögerung
-        progress_bar.progress((i + 1) / update_steps)
-    st.success("Popularity wurde aktualisiert!")
-    now = datetime.datetime.now()
-    slot = f"{now.date()}_{'00' if now.hour < 17 else '17'}"
-    st.session_state.updated_popularity_slots.add(slot)
-    status_text.empty()
+    
+    songs_database_id = "1a9b6204cede8006b67fd247dc660ba4"  # Songs-Datenbank
+    week_database_id = "1a9b6204cede80e29338ede2c76999f2"    # Week-Datenbank
 
+    def get_all_song_page_ids():
+        url = f"{notion_query_endpoint}/{songs_database_id}/query"
+        response = requests.post(url, headers=notion_headers)
+        response.raise_for_status()
+        data = response.json()
+        song_pages = []
+        for page in data.get("results", []):
+            page_id = page["id"]
+            popularity = 0
+            if "Popularity" in page["properties"]:
+                popularity = page["properties"]["Popularity"].get("number", 0)
+            song_pages.append({"page_id": page_id, "popularity": popularity})
+        return song_pages
+
+    def get_song_name(page_id):
+        url = f"{notion_page_endpoint}/{page_id}"
+        response = requests.get(url, headers=notion_headers)
+        response.raise_for_status()
+        data = response.json()
+        props = data.get("properties", {})
+        if "Name" in props and "title" in props["Name"]:
+            title_items = props["Name"].get("title", [])
+            song_name = "".join(item.get("plain_text", "") for item in title_items).strip()
+            if song_name:
+                return song_name
+        return page_id  # Fallback: Seiten-ID
+
+    def create_week_entry(song_page_id, popularity_score, track_id):
+        now_iso = datetime.datetime.now().isoformat()
+        payload = {
+            "parent": { "database_id": week_database_id },
+            "properties": {
+                "Name": { 
+                    "title": [
+                        { "text": { "content": f"Week of {now_iso[:10]}" } }
+                    ]
+                },
+                "Song": {
+                    "relation": [
+                        { "id": song_page_id }
+                    ]
+                },
+                "Popularity Score": {
+                    "number": popularity_score
+                },
+                "Date": {
+                    "date": { "start": now_iso }
+                },
+                "Notion Track ID": {
+                    "rich_text": [
+                        { "text": { "content": track_id } }
+                    ]
+                }
+            }
+        }
+        requests.post(notion_page_endpoint, headers=notion_headers, json=payload)
+        # Keine Ausgabe
+
+    song_pages = get_all_song_page_ids()
+    total = len(song_pages)
+    song_to_track = {}
+    for idx, song in enumerate(song_pages):
+        page_id = song["page_id"]
+        # Hole Songname – falls get_song_name den Seiten-ID zurückgibt, versuchen wir den gecachten Trackname
+        song_name = get_song_name(page_id)
+        if song_name == page_id:
+            song_name = get_track_name_from_page(page_id)
+        status_text.text(f"Verarbeite Song: {song_name}")
+        if not song_name:
+            continue
+        if page_id not in song_to_track:
+            track_id = get_track_id_from_page(page_id)
+            if not track_id:
+                track_id = str(uuid.uuid4())
+            song_to_track[page_id] = track_id
+        else:
+            track_id = song_to_track[page_id]
+        create_week_entry(page_id, song["popularity"], track_id)
+        progress_bar.progress(int((idx + 1) / total * 100))
+    status_text.text("Alle Songs verarbeitet.")
+    st.success("Popularity wurde aktualisiert!")
+    status_text.empty()
 # --- Sidebar: Buttons und Filterformular ---
 with st.sidebar:
     st.markdown("## Automatische Updates")
