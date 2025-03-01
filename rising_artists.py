@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 st.set_page_config(layout="wide")
 
-# === Notion Konfiguration ===
+# === Notion-Konfiguration ===
 tracking_db_id = "1a9b6204cede80e29338ede2c76999f2"  # Tracking-Datenbank (enthält Rollups für "Artist" und "Release Date", Relation "Song")
 notion_secret = "secret_yYvZbk7zcKy0Joe3usdCHMbbZmAFHnCKrF7NvEkWY6E"
 notion_query_endpoint = "https://api.notion.com/v1/databases"
@@ -19,7 +19,7 @@ notion_headers = {
     "Notion-Version": "2022-06-28"
 }
 
-# === Spotify Konfiguration ===
+# === Spotify-Konfiguration ===
 def get_spotify_token():
     url = "https://open.spotify.com/get_access_token?reason=transport&productType=web_player"
     response = requests.get(url)
@@ -28,7 +28,7 @@ def get_spotify_token():
 
 SPOTIFY_TOKEN = get_spotify_token()
 
-# Hilfsfunktion: Extrahiere Text bzw. Datum aus einem Rollup-Feld
+# --- Hilfsfunktionen ---
 def parse_rollup_text(rollup):
     texts = []
     if rollup and "array" in rollup:
@@ -42,7 +42,6 @@ def parse_rollup_text(rollup):
                     texts.append(date_info["start"])
     return " ".join(texts).strip()
 
-# Funktion: Hole den Track Name von der verknüpften Seite (Songs-Datenbank)
 @st.cache_data(show_spinner=False)
 def get_track_name_from_page(page_id):
     url = f"{notion_page_endpoint}/{page_id}"
@@ -54,7 +53,6 @@ def get_track_name_from_page(page_id):
             return "".join([t.get("plain_text", "") for t in title_prop]).strip()
     return "Unbekannter Track"
 
-# Funktion: Hole den Spotify Track ID von der verknüpften Seite (Songs-Datenbank)
 @st.cache_data(show_spinner=False)
 def get_track_id_from_page(page_id):
     url = f"{notion_page_endpoint}/{page_id}"
@@ -66,15 +64,14 @@ def get_track_id_from_page(page_id):
             return "".join([t.get("plain_text", "") for t in text_prop]).strip()
     return ""
 
-# Funktion: Aktualisiere den Growth-Wert einer Messung in der Tracking-Datenbank
 def update_growth_for_measurement(entry_id, growth):
     url = f"{notion_page_endpoint}/{entry_id}"
     data = {"properties": {"Growth": {"number": growth}}}
     response = requests.patch(url, headers=notion_headers, data=json.dumps(data))
     response.raise_for_status()
 
-# Funktion: Hole alle Tracking-Einträge aus der Tracking-Datenbank (ohne Caching, damit Popularity aktuell bleibt)
 def get_tracking_entries():
+    """Popularity muss aktuell sein, daher kein Caching."""
     url = f"{notion_query_endpoint}/{tracking_db_id}/query"
     response = requests.post(url, headers=notion_headers)
     response.raise_for_status()
@@ -91,9 +88,9 @@ def get_tracking_entries():
             entries.append({"entry_id": entry_id, "song_id": song_id, "date": date_str, "popularity": pop})
     return entries
 
-# Funktion: Hole Spotify-Daten (Cover und Spotify Link) für einen Track
 @st.cache_data(show_spinner=False)
 def get_spotify_data(spotify_track_id):
+    """Liefert Cover und Spotify-Link (gecacht)."""
     url = f"https://api.spotify.com/v1/tracks/{spotify_track_id}"
     response = requests.get(url, headers={"Authorization": f"Bearer {SPOTIFY_TOKEN}"})
     if response.status_code == 200:
@@ -105,9 +102,9 @@ def get_spotify_data(spotify_track_id):
         return cover_url, spotify_link
     return "", ""
 
-# Funktion: Hole Metadaten (Track Name, Artist, Release Date, Spotify Track ID) aus der Tracking-Datenbank
 @st.cache_data(show_spinner=False)
 def get_metadata_from_tracking_db():
+    """Artist, Release Date, Track ID etc. (gecacht)."""
     url = f"{notion_query_endpoint}/{tracking_db_id}/query"
     response = requests.post(url, headers=notion_headers)
     response.raise_for_status()
@@ -146,14 +143,15 @@ def get_metadata_from_tracking_db():
         }
     return metadata
 
-# === Streamlit App ===
-
+# === Haupt-App ===
 st.title("Song Tracking Übersicht")
 
-# 1. Oben: Top 10 Songs mit größtem kumulativem Wachstum über 2 Tage (Gallery)
+# 1. Oben: Top 10 Songs mit größtem kumulativem Wachstum über 2 Tage
 st.header("Top 10 Songs – Wachstum über 2 Tage")
+
 tracking_entries = get_tracking_entries()
 metadata = get_metadata_from_tracking_db()
+
 df = pd.DataFrame(tracking_entries)
 if df.empty:
     st.write("Keine Tracking-Daten gefunden.")
@@ -190,22 +188,32 @@ for song_id, group in df_2days.groupby("song_id"):
 cum_df = pd.DataFrame(cumulative)
 top10 = cum_df.sort_values("cumulative_growth", ascending=False).head(10)
 
+# Wir erstellen 5 Spalten (für 5 Karten in einer Zeile)
 cols = st.columns(5)
+
 for idx, row in top10.iterrows():
     with cols[idx % 5]:
-        cover_url, spotify_link = ("", "")
+        cover_url, spotify_link = "", ""
         if row["spotify_track_id"]:
             cover_url, spotify_link = get_spotify_data(row["spotify_track_id"])
+        
+        # Bild
         if cover_url:
             st.image(cover_url, use_container_width=True)
         else:
             st.write("Kein Cover")
-        # Kürze zu lange Titel und zentriere Text
+        
+        # Titel und Artist auf eine Zeile beschränken
         title = row["track_name"]
         if len(title) > 40:
             title = title[:40] + "..."
+        
+        artist_name = row["artist"]
+        if len(artist_name) > 40:
+            artist_name = artist_name[:40] + "..."
+        
         st.markdown(f"<div style='text-align: center; font-weight: bold;'>{title}</div>", unsafe_allow_html=True)
-        st.markdown(f"<div style='text-align: center; font-style: italic;'>{row['artist']}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='text-align: center; font-style: italic;'>{artist_name}</div>", unsafe_allow_html=True)
         st.markdown(f"<div style='text-align: center;'>Release: {row['release_date']}</div>", unsafe_allow_html=True)
         st.markdown(f"<div style='text-align: center;'>Popularity: {row['last_popularity']:.1f}</div>", unsafe_allow_html=True)
         if spotify_link:
