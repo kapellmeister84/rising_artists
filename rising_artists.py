@@ -269,7 +269,7 @@ with st.sidebar:
 
 st.title("Song Tracking Übersicht")
 
-# 1. Oben: Top 10 Songs mit größtem kumulativem Wachstum
+# 1. Oben: Top 10 Songs – Wachstum über alle Messungen
 st.header("Top 10 Songs – Wachstum über alle Messungen")
 
 tracking_entries = get_tracking_entries()
@@ -396,10 +396,9 @@ Popularity: {row['last_popularity']:.1f} | Growth: {row['growth']:.1f}%""")
             if spotify_link:
                 st.markdown(f"[Spotify Link]({spotify_link})")
             with st.expander(f"{row['track_name']} - {row['artist']} anzeigen"):
-                # Hier werden alle Messungen für dieselbe Notion Track ID (über alle Seiten) angezeigt,
-                # sortiert von der ältesten bis zur neuesten Messung.
+                # Alle Messungen, die dieselbe Notion Track ID haben (über alle Seiten), chronologisch sortiert:
                 song_history = df_all[df_all["notion_track_id"] == row["notion_track_id"]].sort_values("date", ascending=True)
-                if len(song_history) == 1:
+                if len(song_history) < 2:
                     fig = px.scatter(song_history, x="date", y="popularity",
                                      title=f"{row['track_name']} - {row['artist']}",
                                      labels={"date": "Datum", "popularity": "Popularity Score"})
