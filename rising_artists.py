@@ -29,7 +29,7 @@ def get_week_entries():
         props = page["properties"]
         pop = props.get("Popularity Score", {}).get("number")
         date_str = props.get("Date", {}).get("date", {}).get("start")
-        # Song-Relation: jeder Eintrag kann mit mehreren Songs verknüpft sein
+        # Hole die Song-Relation (Liste von Objekten mit "id")
         song_relations = props.get("Song", {}).get("relation", [])
         for relation in song_relations:
             song_id = relation["id"]
@@ -67,7 +67,7 @@ st.title("Song Tracking Graphen")
 # Sidebar: Filter- und Sortieroptionen
 st.sidebar.header("Filter & Sort")
 pop_range = st.sidebar.slider("Popularity Range (letzter Messwert)", 0, 100, (0, 100), step=1)
-growth_threshold = st.sidebar.number_input("Min. Growth % (zwischen den letzten beiden Messungen)", value=0.0, step=0.5)
+growth_threshold = st.sidebar.number_input("Min. Growth % (zwischen den letzten beiden Messungen)", min_value=0.0, value=0.0, step=0.5)
 sort_option = st.sidebar.selectbox("Sortiere nach", ["Popularity", "Release Date"])
 
 st.write("Lade Tracking-Daten aus Notion...")
@@ -87,8 +87,8 @@ df["artist"] = df["song_id"].map(lambda x: song_metadata.get(x, {}).get("artist"
 df["release_date"] = df["song_id"].map(lambda x: song_metadata.get(x, {}).get("release_date", ""))
 
 # Berechne pro Song:
-# - Den letzten Popularity-Wert (als Indikator)
-# - Den prozentualen Growth zwischen den letzten beiden Messungen (sofern vorhanden)
+# - Den letzten Popularity-Wert
+# - Den prozentualen Growth zwischen den letzten beiden Messungen
 last_data = []
 for song_id, group in df.groupby("song_id"):
     group = group.sort_values("date")
@@ -126,12 +126,11 @@ elif sort_option == "Release Date":
 st.write("Gefilterte Songs:")
 st.dataframe(filtered_df)
 
-st.write("Graphen der Tracking-History (alle Songs):")
-# Zeige für jeden Song (egal ob gefiltert oder nicht) den Graphen – du kannst hier auch nur die gefilterten Songs anzeigen.
+st.write("Graphen der Tracking-History für gefilterte Songs:")
 for idx, row in filtered_df.iterrows():
     song_id = row["song_id"]
     song_history = df[df["song_id"] == song_id].sort_values("date")
     fig = px.line(song_history, x="date", y="popularity",
                   title=f"{row['song_title']} - {row['artist']}",
                   labels={"date": "Datum", "popularity": "Popularity Score"})
-    st.plotly_chart(fig)
+    st.plotly_chart(fig, use_container_width=True, key=f"chart_{song_id}")
