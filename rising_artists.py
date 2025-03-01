@@ -83,8 +83,8 @@ if df.empty:
     st.write("Keine Tracking-Daten gefunden.")
     st.stop()
 
-# Konvertiere das Datum in datetime
-df["date"] = pd.to_datetime(df["date"])
+# Konvertiere das Datum in datetime (mit Fehlerbehandlung)
+df["date"] = pd.to_datetime(df["date"], errors='coerce')
 # Füge Song-Metadaten hinzu
 df["song_title"] = df["song_id"].map(lambda x: song_metadata.get(x, {}).get("song_title", ""))
 df["artist"] = df["song_id"].map(lambda x: song_metadata.get(x, {}).get("artist", "Unbekannt"))
@@ -128,7 +128,7 @@ elif sort_option == "Release Date":
 st.write("Gefilterte Songs:")
 st.dataframe(filtered_df[["song_title", "artist", "last_popularity", "release_date", "growth"]])
 
-# Zeitraum-Filter: Berechne start_time als Timestamp
+# Zeitraum-Filter: Berechne start_time als Pandas Timestamp
 now = datetime.datetime.now()
 start_time = pd.Timestamp(now - datetime.timedelta(days=days))
 
