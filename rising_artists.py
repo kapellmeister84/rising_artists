@@ -406,16 +406,17 @@ Popularity: {row['last_popularity']:.1f} | Growth: {row['growth']:.1f}%""")
                 st.markdown(f"[Spotify Link]({spotify_link})")
             # Hier wird der Graph anhand der Notion Track ID gefiltert
             with st.expander(f"{row['track_name']} - {row['artist']} anzeigen"):
-                song_history = df_all[df_all["notion_track_id"] == row["notion_track_id"]].sort_values("date")
+                # Sortiere explizit aufsteigend nach Datum (älteste Messung zuerst, neueste zuletzt)
+                song_history = df_all[df_all["notion_track_id"] == row["notion_track_id"]].sort_values("date", ascending=True)
                 if len(song_history) == 1:
                     fig = px.scatter(song_history, x="date", y="popularity",
-                                     title=f"{row['track_name']} - {row['artist']}",
-                                     labels={"date": "Datum", "popularity": "Popularity Score"})
-                else:
-                    fig = px.line(song_history, x="date", y="popularity",
-                                  title=f"{row['track_name']} - {row['artist']}",
-                                  labels={"date": "Datum", "popularity": "Popularity Score"},
-                                  markers=True)
-                st.plotly_chart(fig, use_container_width=True, key=f"chart_{row['notion_track_id']}")
+                         title=f"{row['track_name']} - {row['artist']}",
+                         labels={"date": "Datum", "popularity": "Popularity Score"})
+    else:
+        fig = px.line(song_history, x="date", y="popularity",
+                      title=f"{row['track_name']} - {row['artist']}",
+                      labels={"date": "Datum", "popularity": "Popularity Score"},
+                      markers=True)
+    st.plotly_chart(fig, use_container_width=True, key=f"chart_{row['notion_track_id']}")
 else:
     st.write("Bitte verwenden Sie das Filterformular in der Sidebar, um Ergebnisse anzuzeigen.")
