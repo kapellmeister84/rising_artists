@@ -87,6 +87,7 @@ def get_tracking_entries():
         entry_id = page.get("id")
         props = page.get("properties", {})
         pop = props.get("Popularity Score", {}).get("number")
+        # Versuche zuerst "Date created", sonst nutze created_time
         date_str = props.get("Date created", {}).get("date", {}).get("start")
         if not date_str:
             date_str = page.get("created_time")
@@ -314,14 +315,12 @@ for song_id, group in df_all.groupby("song_id"):
         "last_popularity": last_pop,
         "cumulative_growth": growth
     })
-
 cum_df = pd.DataFrame(cumulative)
 if cum_df.empty:
     st.write("Keine Daten für die Top 10 verfügbar.")
     top10 = pd.DataFrame()
 else:
     top10 = cum_df.sort_values("cumulative_growth", ascending=False).head(10)
-
 num_columns = 5
 rows = [top10.iloc[i:i+num_columns] for i in range(0, len(top10), num_columns)]
 for row_df in rows:
@@ -347,7 +346,6 @@ for row_df in rows:
 
 # 2. Unterhalb: Filterergebnisse
 st.header("Songs filtern")
-
 if submitted:
     last_data = []
     for song_id, group in df_all.groupby("song_id"):
@@ -369,7 +367,6 @@ if submitted:
             "growth": growth_val
         })
     last_df = pd.DataFrame(last_data)
-    
     filtered_df = last_df[
         (last_df["last_popularity"] >= filter_pop_range[0]) &
         (last_df["last_popularity"] <= filter_pop_range[1]) &
@@ -386,7 +383,6 @@ if submitted:
     elif filter_sort_option == "Release Date":
         filtered_df["release_date_dt"] = pd.to_datetime(filtered_df["release_date"], errors="coerce")
         filtered_df = filtered_df.sort_values("release_date_dt", ascending=True)
-    
     st.write("Gefilterte Songs:")
     for idx, row in filtered_df.iterrows():
         cover_url, spotify_link = ("", "")
@@ -417,6 +413,9 @@ Popularity: {row['last_popularity']:.1f} | Growth: {row['growth']:.1f}%""")
                                   title=f"{row['track_name']} - {row['artist']}",
                                   labels={"date_adjusted": "Datum", "popularity": "Popularity Score"},
                                   markers=True)
-                st.plotly_chart(fig, use_container_width=True, key=f"chart_{row['song_id']}")
+                # Fixiere die y-Achse auf 0 bis 100
+                fig.update_yaxes(range=[0, 100])
+                # Nutze einen dynamischen Schlüssel, damit der Graph bei jedem Öffnen neu geladen wird
+                st.plotly_chart(fig, use_container_width=True, key=f"chart_{row['song_id']}_{time.time()}")
 else:
     st.write("Bitte verwenden Sie das Filterformular in der Sidebar, um Ergebnisse anzuzeigen.")
