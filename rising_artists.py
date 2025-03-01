@@ -18,7 +18,14 @@ notion_headers = {
 }
 
 def get_weeks_data():
-    """Lädt alle Einträge aus der Weeks-Datenbank und extrahiert die benötigten Felder."""
+    """
+    Lädt alle Einträge aus der Weeks-Datenbank.
+    Für jeden Eintrag wird:
+      - Der Popularity Score (Zahl)
+      - Der Zeitstempel aus dem Property "Date" (über "start") 
+      - Die Notion Track ID (aus dem Property "Notion Track ID")
+    extrahiert.
+    """
     url = f"{notion_query_endpoint}/{week_database_id}/query"
     response = requests.post(url, headers=notion_headers)
     response.raise_for_status()
@@ -26,39 +33,41 @@ def get_weeks_data():
     entries = []
     for page in data.get("results", []):
         props = page.get("properties", {})
-        # Popularity Score als Zahl
         popularity = props.get("Popularity Score", {}).get("number")
-        # Zeitstempel aus dem Property "Date"
-        date_str = props.get("Date", {}).get("date", {}).get("start")
+        # Hier nehmen wir den Zeitstempel aus dem Property "Date"
+        date_str = props.get("Date", {}).get("start")
         # Notion Track ID aus dem Property "Notion Track ID"
-        notion_track_id = ""
+        track_id = ""
         if "Notion Track ID" in props:
             rich_text = props["Notion Track ID"].get("rich_text", [])
-            notion_track_id = "".join([rt.get("plain_text", "") for rt in rich_text]).strip()
+            track_id = "".join([rt.get("plain_text", "") for rt in rich_text]).strip()
         entries.append({
             "date": date_str,
             "popularity": popularity,
-            "notion_track_id": notion_track_id
+            "notion_track_id": track_id
         })
     return entries
 
 # Daten laden und DataFrame erstellen
 data = get_weeks_data()
 df = pd.DataFrame(data)
+# Nur gültige Datumseinträge berücksichtigen
 df["date"] = pd.to_datetime(df["date"], errors="coerce")
 df = df.dropna(subset=["date"])
 
-# Gruppieren nach Notion Track ID (also pro Song)
+# Gruppiere nach Notion Track ID (jeder Track ID entspricht einem Song)
 grouped = df.groupby("notion_track_id")
 
-# Für jeden Song ein Diagramm erstellen
+# Für jeden Song wird ein Diagramm erstellt
 for track_id, group in grouped:
+    # Sortiere die Messwerte nach Datum (älteste zuerst)
     group = group.sort_values("date")
-    # Erstelle den Graphen (Liniendiagramm mit Markern) mit fester y-Achse 0 bis 100
-    fig = px.line(group, x="date", y="popularity", markers=True, 
-                  title=f"Song (Notion Track ID: {track_id})", 
-                  labels={"date": "Zeit", "popularity": "Popularity Score"})
+    # Erstelle ein Liniendiagramm mit Markern, y-Achse von 0 bis 100
+    fig = px.line(group, x="date", y="popularity", markers=True,
+                  title=f"Song (Notion Track ID: {track_id})",
+                  labels={"date": "Zeit", "popularity": "Popularity"})
     fig.update_yaxes(range=[0, 100])
-    # Jeder Graph wird in einem Expander dargestellt, damit du sie einzeln aufklappen kannst
+    # Um sicherzugehen, dass der Graph bei jedem Öffnen neu geladen wird,
+    # verwenden wir einen dynamischen Schlüssel (basierend auf time.time())
     with st.expander(f"Graph für Song mit Track ID: {track_id}"):
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key=f"chart_{track_id}_{time.time()}")
