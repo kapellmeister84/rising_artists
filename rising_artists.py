@@ -396,16 +396,22 @@ Popularity: {row['last_popularity']:.1f} | Growth: {row['growth']:.1f}%""")
             if spotify_link:
                 st.markdown(f"[Spotify Link]({spotify_link})")
             with st.expander(f"{row['track_name']} - {row['artist']} anzeigen"):
-                # Alle Messungen, die dieselbe Notion Track ID haben (über alle Seiten), chronologisch sortiert:
-                song_history = df_all[df_all["notion_track_id"] == row["notion_track_id"]].sort_values("date", ascending=True)
-                if len(song_history) < 2:
-                    fig = px.scatter(song_history, x="date", y="popularity",
-                                     title=f"{row['track_name']} - {row['artist']}",
-                                     labels={"date": "Datum", "popularity": "Popularity Score"})
+                # Hole alle Messungen, die dieselbe Notion Track ID haben – über alle Seiten –, sortiert von ältesten zu neuesten.
+                song_history = df_all[df_all["notion_track_id"] == row["notion_track_id"]].sort_values("date", ascending=True).copy()
+                # Falls es doppelte Zeitstempel gibt, füge einen kleinen Offset hinzu:
+                if song_history["date"].duplicated().any():
+                    song_history["date_adjusted"] = song_history.groupby("date").cumcount().apply(lambda x: datetime.timedelta(seconds=x))
+                    song_history["date_adjusted"] = song_history["date"] + song_history["date_adjusted"]
                 else:
-                    fig = px.line(song_history, x="date", y="popularity",
+                    song_history["date_adjusted"] = song_history["date"]
+                if len(song_history) < 2:
+                    fig = px.scatter(song_history, x="date_adjusted", y="popularity",
+                                     title=f"{row['track_name']} - {row['artist']}",
+                                     labels={"date_adjusted": "Datum", "popularity": "Popularity Score"})
+                else:
+                    fig = px.line(song_history, x="date_adjusted", y="popularity",
                                   title=f"{row['track_name']} - {row['artist']}",
-                                  labels={"date": "Datum", "popularity": "Popularity Score"},
+                                  labels={"date_adjusted": "Datum", "popularity": "Popularity Score"},
                                   markers=True)
                 st.plotly_chart(fig, use_container_width=True, key=f"chart_{row['notion_track_id']}")
 else:
