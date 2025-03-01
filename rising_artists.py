@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 st.set_page_config(layout="wide")
 
-# === Notion-Konfiguration ===
+# === Notion Konfiguration ===
 tracking_db_id = "1a9b6204cede80e29338ede2c76999f2"  # Tracking-Datenbank (enthält Rollups für "Artist" und "Release Date", Relation "Song")
 notion_secret = "secret_yYvZbk7zcKy0Joe3usdCHMbbZmAFHnCKrF7NvEkWY6E"
 notion_query_endpoint = "https://api.notion.com/v1/databases"
@@ -19,7 +19,7 @@ notion_headers = {
     "Notion-Version": "2022-06-28"
 }
 
-# === Spotify-Konfiguration ===
+# === Spotify Konfiguration ===
 def get_spotify_token():
     url = "https://open.spotify.com/get_access_token?reason=transport&productType=web_player"
     response = requests.get(url)
@@ -28,7 +28,7 @@ def get_spotify_token():
 
 SPOTIFY_TOKEN = get_spotify_token()
 
-# --- Hilfsfunktionen ---
+# Hilfsfunktion: Extrahiere Text bzw. Datum aus einem Rollup-Feld
 def parse_rollup_text(rollup):
     texts = []
     if rollup and "array" in rollup:
@@ -42,6 +42,7 @@ def parse_rollup_text(rollup):
                     texts.append(date_info["start"])
     return " ".join(texts).strip()
 
+# Funktion: Hole den Track Name von der verknüpften Seite (Songs-Datenbank)
 @st.cache_data(show_spinner=False)
 def get_track_name_from_page(page_id):
     url = f"{notion_page_endpoint}/{page_id}"
@@ -53,6 +54,7 @@ def get_track_name_from_page(page_id):
             return "".join([t.get("plain_text", "") for t in title_prop]).strip()
     return "Unbekannter Track"
 
+# Funktion: Hole den Spotify Track ID von der verknüpften Seite (Songs-Datenbank)
 @st.cache_data(show_spinner=False)
 def get_track_id_from_page(page_id):
     url = f"{notion_page_endpoint}/{page_id}"
@@ -64,14 +66,15 @@ def get_track_id_from_page(page_id):
             return "".join([t.get("plain_text", "") for t in text_prop]).strip()
     return ""
 
+# Funktion: Aktualisiere den Growth-Wert einer Messung in der Tracking-Datenbank
 def update_growth_for_measurement(entry_id, growth):
     url = f"{notion_page_endpoint}/{entry_id}"
     data = {"properties": {"Growth": {"number": growth}}}
     response = requests.patch(url, headers=notion_headers, data=json.dumps(data))
     response.raise_for_status()
 
+# Funktion: Hole alle Tracking-Einträge aus der Tracking-Datenbank (ohne Caching, damit Popularity aktuell bleibt)
 def get_tracking_entries():
-    # Kein Caching, da Popularity stets aktuell sein soll.
     url = f"{notion_query_endpoint}/{tracking_db_id}/query"
     response = requests.post(url, headers=notion_headers)
     response.raise_for_status()
@@ -88,6 +91,7 @@ def get_tracking_entries():
             entries.append({"entry_id": entry_id, "song_id": song_id, "date": date_str, "popularity": pop})
     return entries
 
+# Funktion: Hole Spotify-Daten (Cover und Spotify Link) für einen Track
 @st.cache_data(show_spinner=False)
 def get_spotify_data(spotify_track_id):
     url = f"https://api.spotify.com/v1/tracks/{spotify_track_id}"
@@ -101,6 +105,7 @@ def get_spotify_data(spotify_track_id):
         return cover_url, spotify_link
     return "", ""
 
+# Funktion: Hole Metadaten (Track Name, Artist, Release Date, Spotify Track ID) aus der Tracking-Datenbank
 @st.cache_data(show_spinner=False)
 def get_metadata_from_tracking_db():
     url = f"{notion_query_endpoint}/{tracking_db_id}/query"
@@ -185,60 +190,31 @@ for song_id, group in df_2days.groupby("song_id"):
 cum_df = pd.DataFrame(cumulative)
 top10 = cum_df.sort_values("cumulative_growth", ascending=False).head(10)
 
-# Erzeuge ein Grid (feste 5 Spalten) für die Top 10
-custom_css = """
-<style>
-.song-grid {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 1rem;
-}
-.song-card {
-  text-align: center;
-  border: 1px solid #ddd;
-  border-radius: 5px;
-  padding: 0.5rem;
-  height: 320px;
-  box-sizing: border-box;
-}
-.song-card img {
-  width: 100%;
-  height: auto;
-  max-height: 200px;
-  object-fit: cover;
-}
-.song-info {
-  margin-top: 0.5rem;
-  font-size: 0.9rem;
-}
-</style>
-"""
-st.markdown(custom_css, unsafe_allow_html=True)
-
-cards_html = ['<div class="song-grid">']
-for _, row in top10.iterrows():
-    cover_url, spotify_link = ("", "")
-    if row["spotify_track_id"]:
-        cover_url, spotify_link = get_spotify_data(row["spotify_track_id"])
-    card = f"""
-    <div class="song-card">
-      <img src="{cover_url}" alt="Cover">
-      <div class="song-info">
-        <strong>{row['track_name'][:40]}{'...' if len(row['track_name'])>40 else ''}</strong><br>
-        <em>{row['artist']}</em><br>
-        Release: {row['release_date']}<br>
-        Popularity: {row['last_popularity']:.1f}<br>
-        Growth: {row['cumulative_growth']:.1f}%<br>
-        {'<a href="'+spotify_link+'" target="_blank">Spotify Link</a>' if spotify_link else ''}
-      </div>
-    </div>
-    """
-    cards_html.append(card)
-cards_html.append("</div>")
-st.markdown("".join(cards_html), unsafe_allow_html=True)
+cols = st.columns(5)
+for idx, row in top10.iterrows():
+    with cols[idx % 5]:
+        cover_url, spotify_link = ("", "")
+        if row["spotify_track_id"]:
+            cover_url, spotify_link = get_spotify_data(row["spotify_track_id"])
+        if cover_url:
+            st.image(cover_url, use_container_width=True)
+        else:
+            st.write("Kein Cover")
+        # Kürze zu lange Titel und zentriere Text
+        title = row["track_name"]
+        if len(title) > 40:
+            title = title[:40] + "..."
+        st.markdown(f"<div style='text-align: center; font-weight: bold;'>{title}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='text-align: center; font-style: italic;'>{row['artist']}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='text-align: center;'>Release: {row['release_date']}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='text-align: center;'>Popularity: {row['last_popularity']:.1f}</div>", unsafe_allow_html=True)
+        if spotify_link:
+            st.markdown(f"<div style='text-align: center;'><a href='{spotify_link}' target='_blank'>Spotify Link</a></div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='text-align: center; font-weight: bold;'>Growth: {row['cumulative_growth']:.1f}%</div>", unsafe_allow_html=True)
 
 # 2. Unterhalb: Ergebnisse erst anzeigen, wenn Filter gesetzt wurden
 st.header("Songs filtern")
+
 with st.sidebar.form("filter_form"):
     search_query = st.text_input("Song/Artist Suche", "")
     filter_pop_range = st.slider("Popularity Range (letzter Messwert)", 0, 100, (0, 100), step=1, key="filter_pop")
