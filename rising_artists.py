@@ -20,7 +20,6 @@ notion_headers = {
 }
 
 # === Spotify Konfiguration ===
-@st.cache_data(show_spinner=False)
 def get_spotify_token():
     url = "https://open.spotify.com/get_access_token?reason=transport&productType=web_player"
     response = requests.get(url)
@@ -74,7 +73,7 @@ def update_growth_for_measurement(entry_id, growth):
     response = requests.patch(url, headers=notion_headers, data=json.dumps(data))
     response.raise_for_status()
 
-# Funktion: Hole alle Tracking-Einträge (Messungen) aus der Tracking-Datenbank (ohne Caching – Popularity muss aktuell bleiben)
+# Funktion: Hole alle Tracking-Einträge (Messungen) aus der Tracking-Datenbank (ohne Cache, damit Popularity aktuell bleibt)
 def get_tracking_entries():
     url = f"{notion_query_endpoint}/{tracking_db_id}/query"
     response = requests.post(url, headers=notion_headers)
@@ -159,7 +158,6 @@ df = pd.DataFrame(tracking_entries)
 if df.empty:
     st.write("Keine Tracking-Daten gefunden.")
     st.stop()
-
 df["date"] = pd.to_datetime(df["date"], errors="coerce")
 df["track_name"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("track_name", "Unbekannter Track"))
 df["artist"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("artist", "Unbekannt"))
@@ -209,17 +207,18 @@ for idx, row in top10.iterrows():
 
 # 2. Unterhalb: Ergebnisse erst anzeigen, wenn Filter gesetzt wurden
 st.header("Songs filtern")
-search_query = st.sidebar.text_input("Song/Artist Suche", "")
-pop_range = st.sidebar.slider("Popularity Range (letzter Messwert)", 0, 100, (0, 100), step=1, key="filter_pop")
-growth_threshold = st.sidebar.number_input("Min. Growth % (zwischen den letzten beiden Messungen)", min_value=0.0, value=0.0, step=0.5, key="filter_growth")
-sort_option = st.sidebar.selectbox("Sortiere nach", ["Popularity", "Release Date"], key="filter_sort")
-timeframe_option = st.sidebar.selectbox("Zeitraum für Graphen (Ende)", ["3 Tage", "1 Woche", "2 Wochen", "3 Wochen"], key="filter_timeframe")
-timeframe_days = {"3 Tage": 3, "1 Woche": 7, "2 Wochen": 14, "3 Wochen": 21}
-filter_days = timeframe_days[timeframe_option]
 
-apply_filter = st.sidebar.button("Filter anwenden")
+with st.sidebar.form("filter_form"):
+    search_query = st.text_input("Song/Artist Suche", "")
+    filter_pop_range = st.slider("Popularity Range (letzter Messwert)", 0, 100, (0, 100), step=1, key="filter_pop")
+    filter_growth_threshold = st.number_input("Min. Growth % (zwischen den letzten beiden Messungen)", min_value=0.0, value=0.0, step=0.5, key="filter_growth")
+    filter_sort_option = st.selectbox("Sortiere nach", ["Popularity", "Release Date"], key="filter_sort")
+    filter_timeframe_option = st.selectbox("Zeitraum für Graphen (Ende)", ["3 Tage", "1 Woche", "2 Wochen", "3 Wochen"], key="filter_timeframe")
+    filter_timeframe_days = {"3 Tage": 3, "1 Woche": 7, "2 Wochen": 14, "3 Wochen": 21}
+    filter_days = filter_timeframe_days[filter_timeframe_option]
+    submitted = st.form_submit_button("Filter anwenden")
 
-if apply_filter:
+if submitted:
     last_data = []
     for song_id, group in df.groupby("song_id"):
         group = group.sort_values("date")
@@ -242,9 +241,9 @@ if apply_filter:
     last_df = pd.DataFrame(last_data)
     
     filtered_df = last_df[
-        (last_df["last_popularity"] >= pop_range[0]) &
-        (last_df["last_popularity"] <= pop_range[1]) &
-        (last_df["growth"] >= growth_threshold)
+        (last_df["last_popularity"] >= filter_pop_range[0]) &
+        (last_df["last_popularity"] <= filter_pop_range[1]) &
+        (last_df["growth"] >= filter_growth_threshold)
     ]
     if search_query:
         sq = search_query.lower()
@@ -252,29 +251,36 @@ if apply_filter:
             filtered_df["track_name"].str.lower().str.contains(sq) |
             filtered_df["artist"].str.lower().str.contains(sq)
         ]
-    if sort_option == "Popularity":
+    if filter_sort_option == "Popularity":
         filtered_df = filtered_df.sort_values("last_popularity", ascending=False)
-    elif sort_option == "Release Date":
+    elif filter_sort_option == "Release Date":
         filtered_df["release_date_dt"] = pd.to_datetime(filtered_df["release_date"], errors="coerce")
         filtered_df = filtered_df.sort_values("release_date_dt", ascending=True)
     
     st.write("Gefilterte Songs:")
-    st.dataframe(filtered_df[["track_name", "artist", "last_popularity", "release_date", "growth"]])
-    
-    st.write("Graphen der Tracking-History (Beginn: erste Messung) für gefilterte Songs:")
     for idx, row in filtered_df.iterrows():
-        song_id = row["song_id"]
-        song_history = df[df["song_id"] == song_id].sort_values("date")
-        with st.expander(f"{row['track_name']} - {row['artist']} anzeigen"):
-            if len(song_history) == 1:
-                fig = px.scatter(song_history, x="date", y="popularity",
-                                 title=f"{row['track_name']} - {row['artist']}",
-                                 labels={"date": "Datum", "popularity": "Popularity Score"})
-            else:
-                fig = px.line(song_history, x="date", y="popularity",
-                              title=f"{row['track_name']} - {row['artist']}",
-                              labels={"date": "Datum", "popularity": "Popularity Score"},
-                              markers=True)
-            st.plotly_chart(fig, use_container_width=True, key=f"chart_{row['song_id']}")
+        cover_url, spotify_link = ("", "")
+        if row["spotify_track_id"]:
+            cover_url, spotify_link = get_spotify_data(row["spotify_track_id"])
+        with st.container():
+            st.markdown(f"""**{row['track_name']}** – {row['artist']}  
+Release Date: {row['release_date']}  
+Popularity: {row['last_popularity']:.1f} | Growth: {row['growth']:.1f}%""")
+            if cover_url:
+                st.image(cover_url, width=100)
+            if spotify_link:
+                st.markdown(f"[Spotify Link]({spotify_link})")
+            with st.expander(f"{row['track_name']} - {row['artist']} anzeigen"):
+                song_history = df[df["song_id"] == row["song_id"]].sort_values("date")
+                if len(song_history) == 1:
+                    fig = px.scatter(song_history, x="date", y="popularity",
+                                     title=f"{row['track_name']} - {row['artist']}",
+                                     labels={"date": "Datum", "popularity": "Popularity Score"})
+                else:
+                    fig = px.line(song_history, x="date", y="popularity",
+                                  title=f"{row['track_name']} - {row['artist']}",
+                                  labels={"date": "Datum", "popularity": "Popularity Score"},
+                                  markers=True)
+                st.plotly_chart(fig, use_container_width=True, key=f"chart_{row['song_id']}")
 else:
-    st.write("Bitte setzen Sie in der Filter-Sektion einen Suchbegriff und/oder Filter, um Ergebnisse anzuzeigen.")
+    st.write("Bitte verwenden Sie das Filterformular in der Sidebar, um Ergebnisse anzuzeigen.")
