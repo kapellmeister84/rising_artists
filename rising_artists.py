@@ -74,7 +74,7 @@ def update_growth_for_measurement(entry_id, growth):
 
 def get_tracking_entries():
     """Holt Einträge aus der Tracking-Datenbank.
-       Der Zeitstempel wird nun aus dem Property 'Date created' entnommen."""
+       Der Zeitstempel wird aus dem Property 'Date created' entnommen."""
     url = f"{notion_query_endpoint}/{tracking_db_id}/query"
     response = requests.post(url, headers=notion_headers)
     response.raise_for_status()
@@ -369,27 +369,27 @@ if submitted:
     last_df = pd.DataFrame(last_data)
     
     if not last_df.empty and "last_popularity" in last_df.columns:
-    filtered_df = last_df[
-        (last_df["last_popularity"] >= filter_pop_range[0]) &
-        (last_df["last_popularity"] <= filter_pop_range[1]) &
-        (last_df["growth"] >= filter_growth_threshold)
-    ]
-else:
-    filtered_df = last_df.copy()
-
-if search_query and "track_name" in filtered_df.columns and "artist" in filtered_df.columns:
-    sq = search_query.lower()
-    filtered_df = filtered_df[
-        filtered_df["track_name"].str.lower().str.contains(sq) |
-        filtered_df["artist"].str.lower().str.contains(sq)
-    ]
+        filtered_df = last_df[
+            (last_df["last_popularity"] >= filter_pop_range[0]) &
+            (last_df["last_popularity"] <= filter_pop_range[1]) &
+            (last_df["growth"] >= filter_growth_threshold)
+        ]
+    else:
+        filtered_df = last_df.copy()
     
-if "last_popularity" in filtered_df.columns:
-    if filter_sort_option == "Popularity":
-        filtered_df = filtered_df.sort_values("last_popularity", ascending=False)
-    elif filter_sort_option == "Release Date":
-        filtered_df["release_date_dt"] = pd.to_datetime(filtered_df["release_date"], errors="coerce")
-        filtered_df = filtered_df.sort_values("release_date_dt", ascending=True)
+    if search_query and "track_name" in filtered_df.columns and "artist" in filtered_df.columns:
+        sq = search_query.lower()
+        filtered_df = filtered_df[
+            filtered_df["track_name"].str.lower().str.contains(sq) |
+            filtered_df["artist"].str.lower().str.contains(sq)
+        ]
+    
+    if "last_popularity" in filtered_df.columns:
+        if filter_sort_option == "Popularity":
+            filtered_df = filtered_df.sort_values("last_popularity", ascending=False)
+        elif filter_sort_option == "Release Date":
+            filtered_df["release_date_dt"] = pd.to_datetime(filtered_df["release_date"], errors="coerce")
+            filtered_df = filtered_df.sort_values("release_date_dt", ascending=True)
     
     st.write("Gefilterte Songs:")
     for idx, row in filtered_df.iterrows():
@@ -405,7 +405,7 @@ Popularity: {row['last_popularity']:.1f} | Growth: {row['growth']:.1f}%""")
             if spotify_link:
                 st.markdown(f"[Spotify Link]({spotify_link})")
             with st.expander(f"{row['track_name']} - {row['artist']} anzeigen"):
-                # Hole alle Messungen, die dieselbe Notion Track ID haben – über alle Seiten –, sortiert von ältesten zu neuesten.
+                # Alle Messungen, die dieselbe Notion Track ID haben – über alle Seiten –, sortiert von ältesten zu neuesten.
                 song_history = df_all[df_all["notion_track_id"] == row["notion_track_id"]].sort_values("date", ascending=True).copy()
                 # Falls es doppelte Zeitstempel gibt, füge einen kleinen Offset hinzu:
                 if song_history["date"].duplicated().any():
