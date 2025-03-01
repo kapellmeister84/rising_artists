@@ -5,7 +5,6 @@ import json
 import pandas as pd
 import plotly.express as px
 from concurrent.futures import ThreadPoolExecutor
-import uuid  # Wird in update_popularity benötigt
 
 st.set_page_config(layout="wide")
 
@@ -44,6 +43,17 @@ def parse_rollup_text(rollup):
     return " ".join(texts).strip()
 
 @st.cache_data(show_spinner=False)
+def get_track_name_from_page(page_id):
+    url = f"{notion_page_endpoint}/{page_id}"
+    response = requests.get(url, headers=notion_headers)
+    if response.status_code == 200:
+        page = response.json()
+        if "properties" in page and "Track Name" in page["properties"]:
+            title_prop = page["properties"]["Track Name"].get("title", [])
+            return "".join([t.get("plain_text", "") for t in title_prop]).strip()
+    return "Unbekannter Track"
+
+@st.cache_data(show_spinner=False)
 def get_track_id_from_page(page_id):
     url = f"{notion_page_endpoint}/{page_id}"
     response = requests.get(url, headers=notion_headers)
@@ -54,18 +64,29 @@ def get_track_id_from_page(page_id):
             return "".join([t.get("plain_text", "") for t in text_prop]).strip()
     return ""
 
-def get_song_name(page_id):
-    url = f"{notion_page_endpoint}/{page_id}"
-    response = requests.get(url, headers=notion_headers)
-    if response.status_code == 200:
-        data = response.json()
-        props = data.get("properties", {})
-        if "Name" in props and "title" in props["Name"]:
-            title_items = props["Name"].get("title", [])
-            song_name = "".join(item.get("plain_text", "") for item in title_items).strip()
-            if song_name:
-                return song_name
-    return "Unbekannter Song"
+def update_growth_for_measurement(entry_id, growth):
+    url = f"{notion_page_endpoint}/{entry_id}"
+    data = {"properties": {"Growth": {"number": growth}}}
+    response = requests.patch(url, headers=notion_headers, data=json.dumps(data))
+    response.raise_for_status()
+
+def get_tracking_entries():
+    """Popularity muss aktuell sein, daher kein Caching."""
+    url = f"{notion_query_endpoint}/{tracking_db_id}/query"
+    response = requests.post(url, headers=notion_headers)
+    response.raise_for_status()
+    data = response.json()
+    entries = []
+    for page in data.get("results", []):
+        entry_id = page.get("id")
+        props = page.get("properties", {})
+        pop = props.get("Popularity Score", {}).get("number")
+        date_str = props.get("Date", {}).get("date", {}).get("start")
+        song_relations = props.get("Song", {}).get("relation", [])
+        for relation in song_relations:
+            song_id = relation.get("id")
+            entries.append({"entry_id": entry_id, "song_id": song_id, "date": date_str, "popularity": pop})
+    return entries
 
 @st.cache_data(show_spinner=False)
 def get_spotify_data(spotify_track_id):
@@ -89,16 +110,25 @@ def get_metadata_from_tracking_db():
     response.raise_for_status()
     data = response.json()
     metadata = {}
+    with ThreadPoolExecutor() as executor:
+        futures = {}
+        for page in data.get("results", []):
+            props = page.get("properties", {})
+            song_relations = props.get("Song", {}).get("relation", [])
+            if song_relations:
+                related_page_id = song_relations[0].get("id")
+                futures[related_page_id] = executor.submit(get_track_name_from_page, related_page_id)
+        track_names = {key: future.result() for key, future in futures.items()}
     for page in data.get("results", []):
         props = page.get("properties", {})
         song_relations = props.get("Song", {}).get("relation", [])
         if song_relations:
             related_page_id = song_relations[0].get("id")
-            track_name = get_song_name(related_page_id)
+            track_name = track_names.get(related_page_id, "Unbekannter Track")
             spotify_track_id = get_track_id_from_page(related_page_id)
             key = related_page_id
         else:
-            track_name = "Unbekannter Song"
+            track_name = "Unbekannter Track"
             spotify_track_id = ""
             key = page.get("id")
         artist_rollup = props.get("Artist", {}).get("rollup", {})
@@ -113,121 +143,23 @@ def get_metadata_from_tracking_db():
         }
     return metadata
 
-def get_tracking_entries():
-    """Popularity muss aktuell sein, daher kein Caching."""
-    url = f"{notion_query_endpoint}/{tracking_db_id}/query"
-    response = requests.post(url, headers=notion_headers)
-    response.raise_for_status()
-    data = response.json()
-    entries = []
-    for page in data.get("results", []):
-        entry_id = page.get("id")
-        props = page.get("properties", {})
-        pop = props.get("Popularity Score", {}).get("number")
-        date_str = props.get("Date", {}).get("date", {}).get("start")
-        song_relations = props.get("Song", {}).get("relation", [])
-        for relation in song_relations:
-            song_id = relation.get("id")
-            entries.append({"entry_id": entry_id, "song_id": song_id, "date": date_str, "popularity": pop})
-    return entries
-
-# --- Platzhalterfunktion für Get New Music ---
+# === Platzhalterfunktionen für Buttons ===
 def get_new_music():
     st.write("Rufe neue Musik aus Playlisten ab...")
-    # Hier deinen Code einfügen...
-    st.success("Neue Musik wurde hinzugefügt!")
+    # Hier deinen Code einfügen
+    st.success("Neue Musik hinzugefügt!")
 
-# --- Update Popularity Funktion mit Fortschrittsanzeige ---
 def update_popularity():
-    songs_database_id = "1a9b6204cede8006b67fd247dc660ba4"  # Songs-Datenbank
-    week_database_id = "1a9b6204cede80e29338ede2c76999f2"    # Week-Datenbank
+    st.write("Füge neue Popularity-Messung hinzu...")
+    # Hier deinen Code einfügen
+    st.success("Popularity aktualisiert!")
 
-    def get_all_song_page_ids():
-        url = f"{notion_query_endpoint}/{songs_database_id}/query"
-        response = requests.post(url, headers=notion_headers)
-        response.raise_for_status()
-        data = response.json()
-        song_pages = []
-        for page in data.get("results", []):
-            page_id = page["id"]
-            popularity = 0
-            if "Popularity" in page["properties"]:
-                popularity = page["properties"]["Popularity"].get("number", 0)
-            song_pages.append({"page_id": page_id, "popularity": popularity})
-        return song_pages
-
-    def get_song_name_local(page_id):
-        return get_song_name(page_id)
-
-    def create_week_entry(song_page_id, popularity_score, track_id):
-        now_iso = datetime.datetime.now().isoformat()
-        payload = {
-            "parent": { "database_id": week_database_id },
-            "properties": {
-                "Name": { 
-                    "title": [
-                        { "text": { "content": f"Week of {now_iso[:10]}" } }
-                    ]
-                },
-                "Song": {
-                    "relation": [
-                        { "id": song_page_id }
-                    ]
-                },
-                "Popularity Score": {
-                    "number": popularity_score
-                },
-                "Date": {
-                    "date": { "start": now_iso }
-                },
-                "Notion Track ID": {
-                    "rich_text": [
-                        { "text": { "content": track_id } }
-                    ]
-                }
-            }
-        }
-        response = requests.post(notion_page_endpoint, headers=notion_headers, json=payload)
-        # Meldung weglassen
-
-    song_pages = get_all_song_page_ids()
-    total = len(song_pages)
-    progress_bar = st.progress(0)
-    progress_text = st.empty()
-
-    song_to_track = {}
-    for idx, song in enumerate(song_pages):
-        page_id = song["page_id"]
-        song_name = get_song_name_local(page_id)
-        progress_text.text(f"Verarbeite Song: {song_name}")
-        if not song_name:
-            continue
-        if song_name not in song_to_track:
-            song_to_track[song_name] = str(uuid.uuid4())
-        track_id = song_to_track[song_name]
-        create_week_entry(page_id, song["popularity"], track_id)
-        progress_bar.progress(int((idx+1)/total*100))
-    
-    progress_text.text("Alle Songs verarbeitet.")
-    st.success("Popularity wurde aktualisiert!")
-
-# --- Sidebar: Buttons und Filterformular ---
-with st.sidebar:
-    st.markdown("## Automatische Updates")
-    if st.button("Get New Music"):
-        get_new_music()
-    if st.button("Update Popularity"):
-        update_popularity()
-    st.markdown("---")
-    with st.form("filter_form"):
-        search_query = st.text_input("Song/Artist Suche", "")
-        filter_pop_range = st.slider("Popularity Range (letzter Messwert)", 0, 100, (0, 100), step=1, key="filter_pop")
-        filter_growth_threshold = st.number_input("Min. Growth % (zwischen den letzten beiden Messungen)", min_value=0.0, value=0.0, step=0.5, key="filter_growth")
-        filter_sort_option = st.selectbox("Sortiere nach", ["Popularity", "Release Date"], key="filter_sort")
-        filter_timeframe_option = st.selectbox("Zeitraum für Graphen (Ende)", ["3 Tage", "1 Woche", "2 Wochen", "3 Wochen"], key="filter_timeframe")
-        filter_timeframe_days = {"3 Tage": 3, "1 Woche": 7, "2 Wochen": 14, "3 Wochen": 21}
-        filter_days = filter_timeframe_days[filter_timeframe_option]
-        submitted = st.form_submit_button("Filter anwenden")
+# --- Sidebar: Buttons + Filter
+st.sidebar.markdown("## Automatische Updates")
+if st.sidebar.button("Get New Music"):
+    get_new_music()
+if st.sidebar.button("Update Popularity"):
+    update_popularity()
 
 st.title("Song Tracking Übersicht")
 
@@ -243,7 +175,7 @@ if df.empty:
     st.stop()
 
 df["date"] = pd.to_datetime(df["date"], errors="coerce")
-df["track_name"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("track_name", "Unbekannter Song"))
+df["track_name"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("track_name", "Unbekannter Track"))
 df["artist"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("artist", "Unbekannt"))
 df["release_date"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("release_date", ""))
 df["spotify_track_id"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("spotify_track_id", ""))
@@ -260,7 +192,7 @@ for song_id, group in df_2days.groupby("song_id"):
     first_pop = group.iloc[0]["popularity"]
     last_pop = group.iloc[-1]["popularity"]
     growth = ((last_pop - first_pop) / first_pop) * 100 if first_pop and first_pop != 0 else 0
-    meta = metadata.get(song_id, {"track_name": "Unbekannter Song", "artist": "Unbekannt", "release_date": "", "spotify_track_id": ""})
+    meta = metadata.get(song_id, {"track_name": "Unbekannter Track", "artist": "Unbekannt", "release_date": "", "spotify_track_id": ""})
     cumulative.append({
         "song_id": song_id,
         "track_name": meta["track_name"],
@@ -274,31 +206,81 @@ for song_id, group in df_2days.groupby("song_id"):
 cum_df = pd.DataFrame(cumulative)
 top10 = cum_df.sort_values("cumulative_growth", ascending=False).head(10)
 
-num_columns = 5
-rows = [top10.iloc[i:i+num_columns] for i in range(0, len(top10), num_columns)]
-for row_df in rows:
-    cols = st.columns(num_columns)
-    for idx, (_, row) in enumerate(row_df.iterrows()):
-        cover_url, spotify_link = "", ""
-        if row["spotify_track_id"]:
-            cover_url, spotify_link = get_spotify_data(row["spotify_track_id"])
-        with cols[idx]:
-            if cover_url:
-                st.image(cover_url, use_container_width=True)
-            else:
-                st.write("Kein Cover")
-            short_title = row["track_name"][:40] + "..." if len(row["track_name"]) > 40 else row["track_name"]
-            short_artist = row["artist"][:40] + "..." if len(row["artist"]) > 40 else row["artist"]
-            st.markdown(f"<div style='text-align: center; font-weight: bold;'>{short_title}</div>", unsafe_allow_html=True)
-            st.markdown(f"<div style='text-align: center; font-style: italic;'>{short_artist}</div>", unsafe_allow_html=True)
-            st.markdown(f"<div style='text-align: center;'>Release: {row['release_date']}</div>", unsafe_allow_html=True)
-            st.markdown(f"<div style='text-align: center;'>Popularity: {row['last_popularity']:.1f}</div>", unsafe_allow_html=True)
-            if spotify_link:
-                st.markdown(f"<div style='text-align: center;'><a href='{spotify_link}' target='_blank'>Spotify Link</a></div>", unsafe_allow_html=True)
-            st.markdown(f"<div style='text-align: center; font-weight: bold;'>Growth: {row['cumulative_growth']:.1f}%</div>", unsafe_allow_html=True)
+# Feste 5-Spalten-Galerie via HTML
+css_code = """
+<style>
+.song-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 1rem;
+}
+.song-card {
+  text-align: center;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  padding: 0.5rem;
+  height: 320px;
+  box-sizing: border-box;
+}
+.song-card img {
+  width: 100%;
+  height: auto;
+  max-height: 200px;
+  object-fit: cover;
+}
+.song-info {
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+</style>
+"""
+st.markdown(css_code, unsafe_allow_html=True)
+
+cards_html = ["<div class='song-grid'>"]
+for _, row in top10.iterrows():
+    cover_url, spotify_link = "", ""
+    if row["spotify_track_id"]:
+        cover_url, spotify_link = get_spotify_data(row["spotify_track_id"])
+
+    # Kürze Titel und Artist
+    short_title = row["track_name"][:40] + "..." if len(row["track_name"]) > 40 else row["track_name"]
+    short_artist = row["artist"][:40] + "..." if len(row["artist"]) > 40 else row["artist"]
+
+    card_html = f"""
+    <div class="song-card">
+      <img src="{cover_url}" alt="Cover">
+      <div class="song-info">
+        <strong>{short_title}</strong><br>
+        <em>{short_artist}</em><br>
+        Release: {row['release_date']}<br>
+        Popularity: {row['last_popularity']:.1f}<br>
+        Growth: {row['cumulative_growth']:.1f}%<br>
+    """
+    if spotify_link:
+        card_html += f'<a href="{spotify_link}" target="_blank">Spotify Link</a>'
+    card_html += """
+      </div>
+    </div>
+    """
+    cards_html.append(card_html)
+cards_html.append("</div>")
+st.markdown("".join(cards_html), unsafe_allow_html=True)
 
 # 2. Unterhalb: Ergebnisse erst anzeigen, wenn Filter gesetzt wurden
 st.header("Songs filtern")
+
+with st.sidebar.form("filter_form"):
+    search_query = st.text_input("Song/Artist Suche", "")
+    filter_pop_range = st.slider("Popularity Range (letzter Messwert)", 0, 100, (0, 100), step=1, key="filter_pop")
+    filter_growth_threshold = st.number_input("Min. Growth % (zwischen den letzten beiden Messungen)", min_value=0.0, value=0.0, step=0.5, key="filter_growth")
+    filter_sort_option = st.selectbox("Sortiere nach", ["Popularity", "Release Date"], key="filter_sort")
+    filter_timeframe_option = st.selectbox("Zeitraum für Graphen (Ende)", ["3 Tage", "1 Woche", "2 Wochen", "3 Wochen"], key="filter_timeframe")
+    filter_timeframe_days = {"3 Tage": 3, "1 Woche": 7, "2 Wochen": 14, "3 Wochen": 21}
+    filter_days = filter_timeframe_days[filter_timeframe_option]
+    submitted = st.form_submit_button("Filter anwenden")
 
 if submitted:
     last_data = []
@@ -310,7 +292,7 @@ if submitted:
             prev_pop = group.iloc[-2]["popularity"]
             if prev_pop != 0:
                 growth_val = ((last_pop - prev_pop) / prev_pop) * 100
-        meta = metadata.get(song_id, {"track_name": "Unbekannter Song", "artist": "Unbekannt", "release_date": "", "spotify_track_id": ""})
+        meta = metadata.get(song_id, {"track_name": "Unbekannter Track", "artist": "Unbekannt", "release_date": "", "spotify_track_id": ""})
         last_data.append({
             "song_id": song_id,
             "track_name": meta["track_name"],
@@ -341,7 +323,7 @@ if submitted:
     
     st.write("Gefilterte Songs:")
     for idx, row in filtered_df.iterrows():
-        cover_url, spotify_link = "", ""
+        cover_url, spotify_link = ("", "")
         if row["spotify_track_id"]:
             cover_url, spotify_link = get_spotify_data(row["spotify_track_id"])
         with st.container():
