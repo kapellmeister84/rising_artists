@@ -43,6 +43,7 @@ def parse_rollup_text(rollup):
                     texts.append(date_info["start"])
     return " ".join(texts).strip()
 
+@st.cache_data(show_spinner=False)
 def get_track_name_from_page(page_id):
     url = f"{notion_page_endpoint}/{page_id}"
     response = requests.get(url, headers=notion_headers)
@@ -53,6 +54,7 @@ def get_track_name_from_page(page_id):
             return "".join([t.get("plain_text", "") for t in title_prop]).strip()
     return "Unbekannter Track"
 
+@st.cache_data(show_spinner=False)
 def get_track_id_from_page(page_id):
     url = f"{notion_page_endpoint}/{page_id}"
     response = requests.get(url, headers=notion_headers)
@@ -69,8 +71,9 @@ def update_growth_for_measurement(entry_id, growth):
     response = requests.patch(url, headers=notion_headers, json=payload)
     response.raise_for_status()
 
-# Für die Graph-Aktualisierung: Keine Cache-Dekoration verwenden
+@st.cache_data(show_spinner=False)
 def get_all_tracking_pages():
+    """Lädt per Pagination alle Seiten aus der Tracking-Datenbank (cached)."""
     url = f"{notion_query_endpoint}/{tracking_db_id}/query"
     payload = {}
     pages = []
@@ -88,6 +91,7 @@ def get_all_tracking_pages():
     return pages
 
 def get_tracking_entries():
+    """Extrahiert Daten aus allen Tracking-Seiten (nutzt den gecachten get_all_tracking_pages())."""
     pages = get_all_tracking_pages()
     entries = []
     for page in pages:
@@ -106,6 +110,7 @@ def get_tracking_entries():
             })
     return entries
 
+@st.cache_data(show_spinner=False)
 def get_spotify_data(spotify_track_id):
     url = f"https://api.spotify.com/v1/tracks/{spotify_track_id}"
     response = requests.get(url, headers={"Authorization": f"Bearer {SPOTIFY_TOKEN}"})
@@ -118,6 +123,7 @@ def get_spotify_data(spotify_track_id):
         return cover_url, spotify_link
     return "", ""
 
+@st.cache_data(show_spinner=False)
 def get_metadata_from_tracking_db():
     pages = get_all_tracking_pages()
     metadata = {}
@@ -154,7 +160,7 @@ def get_metadata_from_tracking_db():
         }
     return metadata
 
-# --- Platzhalterfunktionen für Buttons mit Fortschrittsbalken ---
+# --- Platzhalterfunktionen für Buttons ---
 def get_new_music():
     st.write("Rufe neue Musik aus Playlisten ab...")
     progress_bar = st.progress(0)
@@ -204,7 +210,6 @@ def update_popularity():
         return page_id
 
     def create_week_entry(song_page_id, popularity_score, track_id):
-        # Füge einen Offset hinzu, damit der neue Eintrag chronologisch zuletzt liegt
         now = datetime.datetime.now()
         now_with_offset = now + datetime.timedelta(seconds=1)
         now_iso = now_with_offset.isoformat()
@@ -260,10 +265,10 @@ def update_popularity():
     st.success("Popularity wurde aktualisiert!")
     status_text.empty()
     
-    # Growth-Berechnung: Für jeden Song werden die beiden neuesten Messwerte verglichen und der Growth-Wert
-    # wird in den neuesten Eintrag geschrieben.
+    # Growth-Berechnung: Vergleiche die beiden neuesten Messwerte jedes Songs und update den Growth-Wert
     st.write("Berechne Growth für jeden Song...")
-    # Direkt ohne Cache neu laden, damit die aktuellsten Messwerte berücksichtigt werden:
+    # Cache leeren, um die neuesten Daten zu erhalten
+    get_tracking_entries.clear()
     updated_entries = get_tracking_entries()
     df_update = pd.DataFrame(updated_entries)
     df_update["date"] = pd.to_datetime(df_update["date"], errors="coerce")
