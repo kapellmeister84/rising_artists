@@ -84,7 +84,7 @@ def get_tracking_entries():
         entry_id = page.get("id")
         props = page.get("properties", {})
         pop = props.get("Popularity Score", {}).get("number")
-        # Den Zeitstempel jetzt aus 'Date created' auslesen:
+        # Zeitstempel aus "Date created"
         date_str = props.get("Date created", {}).get("date", {}).get("start")
         song_relations = props.get("Song", {}).get("relation", [])
         for relation in song_relations:
@@ -282,7 +282,7 @@ if df.empty:
     st.write("Keine Tracking-Daten gefunden.")
     st.stop()
 
-# Den Zeitstempel parsen; hier verwenden wir den Wert aus "Date created"
+# Den Zeitstempel parsen; hier verwenden wir "Date created"
 df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.tz_localize(None)
 df["track_name"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("track_name", "Unbekannter Track"))
 df["artist"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("artist", "Unbekannt"))
@@ -368,11 +368,16 @@ if submitted:
         })
     last_df = pd.DataFrame(last_data)
     
-    filtered_df = last_df[
-        (last_df["last_popularity"] >= filter_pop_range[0]) &
-        (last_df["last_popularity"] <= filter_pop_range[1]) &
-        (last_df["growth"] >= filter_growth_threshold)
-    ]
+    # Prüfe, ob last_df leer ist, bevor gefiltert wird
+    if not last_df.empty and "last_popularity" in last_df.columns:
+        filtered_df = last_df[
+            (last_df["last_popularity"] >= filter_pop_range[0]) &
+            (last_df["last_popularity"] <= filter_pop_range[1]) &
+            (last_df["growth"] >= filter_growth_threshold)
+        ]
+    else:
+        filtered_df = last_df.copy()
+    
     if search_query:
         sq = search_query.lower()
         filtered_df = filtered_df[
