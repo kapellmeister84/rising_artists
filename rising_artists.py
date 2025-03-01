@@ -149,11 +149,11 @@ def get_new_music():
     st.write("Rufe neue Musik aus Playlisten ab...")
     progress_bar = st.progress(0)
     status_text = st.empty()
-    # Beispielhafte Song-Liste (Simulation)
+    # Beispiel: Simuliere Abruf von 5 Songs
     song_list = ["Song A", "Song B", "Song C", "Song D", "Song E"]
     for i, song in enumerate(song_list):
         status_text.text(f"Rufe {song} ab...")
-        time.sleep(1)  # Simulation einer Verzögerung
+        time.sleep(1)  # Simulation der Verzögerung
         progress_bar.progress((i + 1) / len(song_list))
     st.success("Neue Musik wurde hinzugefügt!")
     st.session_state.get_new_music_week = datetime.datetime.now().isocalendar()[1]
@@ -166,7 +166,7 @@ def update_popularity():
     update_steps = 5  # Beispiel: 5 Schritte
     for i in range(update_steps):
         status_text.text(f"Update Popularity: Schritt {i+1} von {update_steps}")
-        time.sleep(1)  # Simulation einer Verzögerung
+        time.sleep(1)  # Simulation der Verzögerung
         progress_bar.progress((i + 1) / update_steps)
     st.success("Popularity wurde aktualisiert!")
     now = datetime.datetime.now()
@@ -218,14 +218,9 @@ if df.empty:
     st.write("Keine Tracking-Daten gefunden.")
     st.stop()
 
-# Aktualisiere die Datumsspalte mit dem richtigen Format (yyyy.mm.dd. hh:mm)
+# Konvertiere das Datum explizit mit deinem Format (yyyy.mm.dd. hh:mm) als tz-naiv
 df["date"] = pd.to_datetime(df["date"], format="%Y.%m.%d. %H:%M", errors="coerce")
-df["track_name"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("track_name", "Unbekannter Track"))
-df["artist"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("artist", "Unbekannt"))
-df["release_date"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("release_date", ""))
-df["spotify_track_id"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("spotify_track_id", ""))
-
-now = pd.Timestamp.now(tz='UTC')
+now = pd.Timestamp.now()  # tz-naiv
 start_2days = now - pd.Timedelta(days=2)
 df_2days = df[df["date"] >= start_2days]
 
