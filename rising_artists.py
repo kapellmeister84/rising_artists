@@ -6,7 +6,7 @@ import pandas as pd
 import plotly.express as px
 
 # === Notion Konfiguration ===
-# Diese Datenbank enthält jetzt Artist Name, Song Name und Release Date
+# Diese Datenbank enthält jetzt Artist Name, track name und Release Date
 songs_database_id = "b94c8042619d42a3be799c9795984150"  
 week_database_id = "1a9b6204cede80e29338ede2c76999f2"    # Week-Tracking-Datenbank
 notion_secret = "secret_yYvZbk7zcKy0Joe3usdCHMbbZmAFHnCKrF7NvEkWY6E"
@@ -37,7 +37,7 @@ def get_week_entries():
             entries.append({"song_id": song_id, "date": date_str, "popularity": pop})
     return entries
 
-# Lade Song-Metadaten (Song Name, Artist Name, Release Date) aus der Songs-Datenbank
+# Lade Song-Metadaten (track name, Artist Name, Release Date) aus der Songs-Datenbank
 def get_song_metadata():
     url = f"{notion_query_endpoint}/{songs_database_id}/query"
     response = requests.post(url, headers=notion_headers)
@@ -47,9 +47,9 @@ def get_song_metadata():
     for page in data.get("results", []):
         page_id = page.get("id")
         props = page.get("properties", {})
-        # Song Name: Alle Textfragmente zusammenfügen
-        if "Song Name" in props and "title" in props["Song Name"]:
-            song_name = "".join([t.get("plain_text", "") for t in props["Song Name"]["title"]]).strip()
+        # track name: Alle Textfragmente zusammenfügen
+        if "track name" in props and "title" in props["track name"]:
+            song_name = "".join([t.get("plain_text", "") for t in props["track name"]["title"]]).strip()
         else:
             song_name = "Unbekannter Song"
         # Artist Name: Alle Textfragmente zusammenfügen
