@@ -2,14 +2,9 @@ import streamlit as st
 import requests
 import pandas as pd
 import datetime
-import json
-import time
-import plotly.express as px
-from concurrent.futures import ThreadPoolExecutor
-import uuid
 
 st.set_page_config(layout="wide")
-st.title("Weekly Popularity Graphs - Debug Mode")
+st.title("Messwerte für 'Erfolg ist kein Glück'")
 
 # === Notion-Konfiguration für die Weeks-Datenbank ===
 week_database_id = "1a9b6204cede80e29338ede2c76999f2"
@@ -24,10 +19,10 @@ notion_headers = {
 def get_weeks_data():
     """
     Lädt alle Einträge aus der Weeks-Datenbank.
-    Extrahiert für jeden Eintrag:
-      - Popularity Score,
-      - den Zeitstempel aus dem Property "Date"
-      - die Notion Track ID (Song-ID) aus der Relation "Song".
+    Extrahiert:
+      - den Popularity Score,
+      - den Zeitstempel aus dem Property "Date",
+      - die Notion Track ID (welche den Song eindeutig identifiziert).
     """
     url = f"{notion_query_endpoint}/{week_database_id}/query"
     response = requests.post(url, headers=notion_headers)
@@ -37,38 +32,29 @@ def get_weeks_data():
     for page in data.get("results", []):
         props = page.get("properties", {})
         popularity = props.get("Popularity Score", {}).get("number")
-        # Verwende das Property "Date" als Zeitstempel
+        # Nutze das Property "Date" für den Zeitstempel
         date_str = props.get("Date", {}).get("date", {}).get("start")
-        # Extrahiere die Song-ID aus der Relation "Song"
-        song_relations = props.get("Song", {}).get("relation", [])
-        song_id = song_relations[0]["id"] if song_relations else None
+        # Extrahiere die Notion Track ID aus dem Property "Notion Track ID"
+        track_id = ""
+        if "Notion Track ID" in props:
+            rich_text = props["Notion Track ID"].get("rich_text", [])
+            track_id = "".join(rt.get("plain_text", "") for rt in rich_text).strip()
         entries.append({
             "date": date_str,
             "popularity": popularity,
-            "song_id": song_id
+            "notion_track_id": track_id
         })
     return entries
 
-# Daten laden und DataFrame erstellen
+# Daten abrufen und in einen DataFrame umwandeln
 data = get_weeks_data()
 df = pd.DataFrame(data)
-st.write("Rohdaten aus Notion (unverarbeitete Zeitstempel):", df[["date", "song_id"]].drop_duplicates())
-
-# Datum parsen und nur gültige Einträge behalten
+# Datum parsen
 df["date"] = pd.to_datetime(df["date"], errors="coerce")
-df = df.dropna(subset=["date", "song_id"])
-st.write("Daten nach Datumskonvertierung:", df.head())
+df = df.dropna(subset=["date"])
+st.write("Rohdaten aus Notion (Zeige die ersten 5 Einträge):", df.head())
 
-# Gruppiere nach Song-ID (jede Song-ID gehört zu einem Song)
-grouped = df.groupby("song_id")
+# Filtere die Daten für den Song "Erfolg ist kein Glück" (Notion Track ID: 7ocanzdHHuxnYCHgS40CPF)
+df_filtered = df[df["notion_track_id"] == "7ocanzdHHuxnYCHgS40CPF"]
 
-# Erstelle für jeden Song ein Diagramm
-for song_id, group in grouped:
-    group = group.sort_values("date")
-    fig = px.line(group, x="date", y="popularity", markers=True,
-                  title=f"Song (ID: {song_id})",
-                  labels={"date": "Zeit", "popularity": "Popularity Score"})
-    fig.update_yaxes(range=[0, 100])
-    with st.expander(f"Graph für Song ID: {song_id}"):
-        # Der dynamische Schlüssel sorgt für Neuladen beim Aufklappen
-        st.plotly_chart(fig, use_container_width=True, key=f"chart_{song_id}_{time.time()}")
+st.write("Alle Messwerte für 'Erfolg ist kein Glück':", df_filtered)
