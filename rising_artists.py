@@ -27,7 +27,6 @@ def get_spotify_token():
     response = requests.get(url)
     response.raise_for_status()
     return response.json().get("accessToken")
-
 SPOTIFY_TOKEN = get_spotify_token()
 
 # --- Hilfsfunktionen ---
@@ -73,7 +72,7 @@ def update_growth_for_measurement(entry_id, growth):
     response.raise_for_status()
 
 def get_all_tracking_pages():
-    """Lädt alle Seiten aus der Tracking-Datenbank per Pagination."""
+    """Lädt per Pagination alle Seiten aus der Tracking-Datenbank."""
     url = f"{notion_query_endpoint}/{tracking_db_id}/query"
     payload = {}
     pages = []
@@ -91,8 +90,11 @@ def get_all_tracking_pages():
     return pages
 
 def get_tracking_entries():
-    """Holt Einträge aus der Tracking-Datenbank mittels Pagination.
-    Extrahiert Popularity Score, den Zeitstempel aus dem Property "Date" und die Song-ID aus der Relation "Song".
+    """
+    Extrahiert aus allen Seiten der Tracking-Datenbank:
+      - Popularity Score,
+      - Zeitstempel aus dem Property "Date",
+      - die Song-ID aus der Relation "Song".
     """
     pages = get_all_tracking_pages()
     entries = []
@@ -100,12 +102,16 @@ def get_tracking_entries():
         entry_id = page.get("id")
         props = page.get("properties", {})
         pop = props.get("Popularity Score", {}).get("number")
-        # Das Property "Date" enthält den Zeitstempel der Messung
         date_str = props.get("Date", {}).get("date", {}).get("start")
         song_relations = props.get("Song", {}).get("relation", [])
         for relation in song_relations:
             song_id = relation.get("id")
-            entries.append({"entry_id": entry_id, "song_id": song_id, "date": date_str, "popularity": pop})
+            entries.append({
+                "entry_id": entry_id,
+                "song_id": song_id,
+                "date": date_str,
+                "popularity": pop
+            })
     return entries
 
 @st.cache_data(show_spinner=False)
@@ -124,7 +130,11 @@ def get_spotify_data(spotify_track_id):
 
 @st.cache_data(show_spinner=False)
 def get_metadata_from_tracking_db():
-    """Liest Artist, Release Date, Track ID etc. aus der Tracking-Datenbank."""
+    """
+    Extrahiert aus allen Seiten der Tracking-Datenbank:
+      - Den Trackname, Artist, Release Date,
+      - die Spotify Track ID aus dem Property "Track ID".
+    """
     pages = get_all_tracking_pages()
     metadata = {}
     with ThreadPoolExecutor() as executor:
@@ -165,7 +175,6 @@ def get_new_music():
     st.write("Rufe neue Musik aus Playlisten ab...")
     progress_bar = st.progress(0)
     status_text = st.empty()
-    # Simulation: Abruf von 5 Songs
     song_list = ["Song A", "Song B", "Song C", "Song D", "Song E"]
     for i, song in enumerate(song_list):
         status_text.text(f"Rufe {song} ab...")
@@ -284,7 +293,7 @@ with st.sidebar:
 
 st.title("Song Tracking Übersicht")
 
-# 1. Oben: Top 10 Songs mit größtem kumulativem Wachstum
+# 1. Oben: Top 10 Songs – Wachstum über alle Messungen
 st.header("Top 10 Songs – Wachstum über alle Messungen")
 
 tracking_entries = get_tracking_entries()
@@ -300,7 +309,7 @@ df["track_name"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("track_na
 df["artist"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("artist", "Unbekannt"))
 df["release_date"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("release_date", ""))
 df["spotify_track_id"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("spotify_track_id", ""))
-# Verwende alle Messwerte (nicht nur 2 Tage zurück)
+# Verwende alle Messwerte
 df_all = df[df["date"].notnull()]
 
 cumulative = []
@@ -338,18 +347,32 @@ for row_df in rows:
         if row["spotify_track_id"]:
             cover_url, spotify_link = get_spotify_data(row["spotify_track_id"])
         with cols[idx]:
+            # Spotify-Link im Songtitel
+            if spotify_link:
+                st.markdown(f"[{row['track_name']}]({spotify_link})", unsafe_allow_html=True)
+            else:
+                st.markdown(f"{row['track_name']}", unsafe_allow_html=True)
+            # Das Cover als "Klickfläche" – unter dem Cover erscheint ein Button, der den Graph anzeigt
             if cover_url:
                 st.image(cover_url, use_container_width=True)
+                if st.button("Graph anzeigen", key=f"graph_{row['song_id']}"):
+                    # Erzeuge den Graphen für diesen Song
+                    song_history = df_all[df_all["song_id"] == row["song_id"]].sort_values("date")
+                    if len(song_history) == 1:
+                        fig = px.scatter(song_history, x="date", y="popularity",
+                                         title=f"{row['track_name']} - {row['artist']}",
+                                         labels={"date": "Datum", "popularity": "Popularity Score"})
+                    else:
+                        fig = px.line(song_history, x="date", y="popularity",
+                                      title=f"{row['track_name']} - {row['artist']}",
+                                      labels={"date": "Datum", "popularity": "Popularity Score"},
+                                      markers=True)
+                    fig.update_yaxes(range=[0, 100])
+                    st.plotly_chart(fig, use_container_width=True, key=f"chart_{row['song_id']}_{time.time()}")
             else:
                 st.write("Kein Cover")
-            short_title = row["track_name"][:40] + "..." if len(row["track_name"]) > 40 else row["track_name"]
-            short_artist = row["artist"][:40] + "..." if len(row["artist"]) > 40 else row["artist"]
-            st.markdown(f"<div style='text-align: center; font-weight: bold;'>{short_title}</div>", unsafe_allow_html=True)
-            st.markdown(f"<div style='text-align: center; font-style: italic;'>{short_artist}</div>", unsafe_allow_html=True)
             st.markdown(f"<div style='text-align: center;'>Release: {row['release_date']}</div>", unsafe_allow_html=True)
             st.markdown(f"<div style='text-align: center;'>Popularity: {row['last_popularity']:.1f}</div>", unsafe_allow_html=True)
-            if spotify_link:
-                st.markdown(f"<div style='text-align: center;'><a href='{spotify_link}' target='_blank'>Spotify Link</a></div>", unsafe_allow_html=True)
             st.markdown(f"<div style='text-align: center; font-weight: bold;'>Growth: {row['cumulative_growth']:.1f}%</div>", unsafe_allow_html=True)
 
 # 2. Unterhalb: Filterergebnisse
@@ -405,7 +428,7 @@ Popularity: {row['last_popularity']:.1f} | Growth: {row['growth']:.1f}%""")
             if cover_url:
                 st.image(cover_url, width=100)
             if spotify_link:
-                st.markdown(f"[Spotify Link]({spotify_link})")
+                st.markdown(f"[Spotify Link]({spotify_link})", unsafe_allow_html=True)
             with st.expander(f"{row['track_name']} - {row['artist']} anzeigen"):
                 song_history = df_all[df_all["song_id"] == row["song_id"]].sort_values("date")
                 if len(song_history) == 1:
