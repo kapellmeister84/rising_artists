@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 import datetime
 import json
+import time
 import pandas as pd
 import plotly.express as px
 from concurrent.futures import ThreadPoolExecutor
@@ -143,24 +144,57 @@ def get_metadata_from_tracking_db():
         }
     return metadata
 
-# --- Platzhalterfunktionen für Buttons ---
+# --- Platzhalterfunktionen für Buttons mit Fortschrittsbalken ---
 def get_new_music():
     st.write("Rufe neue Musik aus Playlisten ab...")
-    # Hier deinen Code einfügen...
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    # Beispielhafte Song-Liste, die abgerufen werden soll:
+    song_list = ["Song A", "Song B", "Song C", "Song D", "Song E"]
+    for i, song in enumerate(song_list):
+        status_text.text(f"Rufe {song} ab...")
+        time.sleep(1)  # Simulation der Verzögerung
+        progress_bar.progress((i + 1) / len(song_list))
     st.success("Neue Musik wurde hinzugefügt!")
+    st.session_state.get_new_music_week = datetime.datetime.now().isocalendar()[1]
+    status_text.empty()  # Statustext löschen
 
 def update_popularity():
     st.write("Füge neue Popularity-Messung hinzu...")
-    # Hier deinen Code einfügen...
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    # Beispielhafter Ablauf zur Aktualisierung der Popularity (Simulation)
+    update_steps = 5
+    for i in range(update_steps):
+        status_text.text(f"Update Popularity: Schritt {i+1} von {update_steps}")
+        time.sleep(1)  # Simulation der Verzögerung
+        progress_bar.progress((i + 1) / update_steps)
     st.success("Popularity wurde aktualisiert!")
+    now = datetime.datetime.now()
+    slot = f"{now.date()}_{'00' if now.hour < 17 else '17'}"
+    st.session_state.updated_popularity_slots.add(slot)
+    status_text.empty()
 
 # --- Sidebar: Buttons und Filterformular ---
 with st.sidebar:
+    # Initialisiere Session-State Variablen, falls nicht vorhanden
+    if "get_new_music_week" not in st.session_state:
+        st.session_state.get_new_music_week = None
+    if "updated_popularity_slots" not in st.session_state:
+        st.session_state.updated_popularity_slots = set()
+    
     st.markdown("## Automatische Updates")
-    if st.button("Get New Music"):
-        get_new_music()
-    if st.button("Update Popularity"):
-        update_popularity()
+    now_dt = datetime.datetime.now()
+    # Get New Music: nur freitags, falls noch nicht in dieser Woche gedrückt
+    if now_dt.weekday() == 4 and st.session_state.get_new_music_week != now_dt.isocalendar()[1]:
+        if st.button("Get New Music"):
+            get_new_music()
+    # Update Popularity: erscheint, wenn Get New Music gedrückt wurde und der aktuelle Slot noch nicht aktualisiert wurde
+    current_slot = f"{now_dt.date()}_{'00' if now_dt.hour < 17 else '17'}"
+    if st.session_state.get_new_music_week == now_dt.isocalendar()[1] and current_slot not in st.session_state.updated_popularity_slots:
+        if st.button("Update Popularity"):
+            update_popularity()
+    
     st.markdown("---")
     with st.form("filter_form"):
         search_query = st.text_input("Song/Artist Suche", "")
