@@ -71,13 +71,7 @@ def update_growth_for_measurement(entry_id, growth):
     response.raise_for_status()
 
 def get_tracking_entries():
-    """
-    Holt alle Einträge aus der Weeks-Datenbank.
-    Jeder Eintrag enthält:
-      - entry_id, song_id (Relation "Song"),
-      - date (aus Property "Date"),
-      - popularity (aus Property "Popularity Score").
-    """
+    """Holt alle Einträge aus der Weeks-Datenbank."""
     url = f"{notion_query_endpoint}/{weeks_db_id}/query"
     response = requests.post(url, headers=notion_headers)
     response.raise_for_status()
@@ -110,10 +104,7 @@ def get_spotify_data(spotify_track_id):
 
 @st.cache_data(show_spinner=False)
 def get_metadata_from_tracking_db():
-    """
-    Liest Metadaten (Track Name, Artist, Release Date, Spotify Track ID) aus der Weeks-Datenbank.
-    Hierzu wird für jeden Eintrag über die Relation "Song" der Name, etc. aus der Song-Datenbank geholt.
-    """
+    """Liest Metadaten (Track Name, Artist, Release Date, Spotify Track ID) aus der Weeks-Datenbank."""
     url = f"{notion_query_endpoint}/{weeks_db_id}/query"
     response = requests.post(url, headers=notion_headers)
     response.raise_for_status()
@@ -152,7 +143,7 @@ def get_metadata_from_tracking_db():
         }
     return metadata
 
-# Neue Funktion: Erstellt einen neuen Messungseintrag in der Weeks-Datenbank
+# Neue Funktion: Erstelle einen neuen Messungseintrag in der Weeks-Datenbank
 def create_new_measurement(song_id, popularity, code):
     """
     Legt einen neuen Eintrag in der Weeks-Datenbank an.
@@ -186,10 +177,10 @@ def create_new_measurement(song_id, popularity, code):
 def update_popularity():
     st.write("Füge neue Popularity-Messung hinzu...")
     run_code = "Run-" + datetime.datetime.now().strftime("%Y%m%d-%H%M")
-    # Beispiel-Dummy-Songs – ersetze dies durch deine Logik
+    # Beispiel-Dummy-Songs – hier werden gültige UUIDs verwendet
     example_songs = [
-        {"song_id": "123abc", "pop": 15},
-        {"song_id": "456def", "pop": 20}
+        {"song_id": "123e4567-e89b-12d3-a456-426614174000", "pop": 15},
+        {"song_id": "123e4567-e89b-12d3-a456-426614174001", "pop": 20}
     ]
     for s in example_songs:
         create_new_measurement(song_id=s["song_id"], popularity=s["pop"], code=run_code)
@@ -313,7 +304,6 @@ for song_id, group in df_all.groupby("song_id"):
         "last_popularity": last_pop,
         "cumulative_growth": growth
     })
-
 cum_df = pd.DataFrame(cumulative)
 if cum_df.empty:
     st.write("Keine Daten für die Top 10 verfügbar.")
@@ -345,7 +335,7 @@ for row_df in rows:
                 st.markdown(f"<div style='text-align: center;'><a href='{spotify_link}' target='_blank'>Spotify Link</a></div>", unsafe_allow_html=True)
             st.markdown(f"<div style='text-align: center; font-weight: bold;'>Growth: {row['cumulative_growth']:.1f}%</div>", unsafe_allow_html=True)
 
-# 2. Unterhalb: Filterergebnisse – Hier kann im Expander der Graph für einen bestimmten Code angezeigt werden
+# 2. Unterhalb: Filterergebnisse – Hier wird im Expander der Graph für einen bestimmten Code angezeigt
 st.header("Songs filtern")
 
 if submitted:
