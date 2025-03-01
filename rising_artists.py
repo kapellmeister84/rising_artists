@@ -369,21 +369,22 @@ if submitted:
     last_df = pd.DataFrame(last_data)
     
     if not last_df.empty and "last_popularity" in last_df.columns:
-        filtered_df = last_df[
-            (last_df["last_popularity"] >= filter_pop_range[0]) &
-            (last_df["last_popularity"] <= filter_pop_range[1]) &
-            (last_df["growth"] >= filter_growth_threshold)
-        ]
-    else:
-        filtered_df = last_df.copy()
+    filtered_df = last_df[
+        (last_df["last_popularity"] >= filter_pop_range[0]) &
+        (last_df["last_popularity"] <= filter_pop_range[1]) &
+        (last_df["growth"] >= filter_growth_threshold)
+    ]
+else:
+    filtered_df = last_df.copy()
+
+if search_query and "track_name" in filtered_df.columns and "artist" in filtered_df.columns:
+    sq = search_query.lower()
+    filtered_df = filtered_df[
+        filtered_df["track_name"].str.lower().str.contains(sq) |
+        filtered_df["artist"].str.lower().str.contains(sq)
+    ]
     
-    if search_query and "track_name" in filtered_df.columns and "artist" in filtered_df.columns:
-        sq = search_query.lower()
-        filtered_df = filtered_df[
-            filtered_df["track_name"].str.lower().str.contains(sq) |
-            filtered_df["artist"].str.lower().str.contains(sq)
-        ]
-    
+if "last_popularity" in filtered_df.columns:
     if filter_sort_option == "Popularity":
         filtered_df = filtered_df.sort_values("last_popularity", ascending=False)
     elif filter_sort_option == "Release Date":
