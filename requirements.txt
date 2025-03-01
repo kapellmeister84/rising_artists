@@ -1,3 +1,4 @@
 streamlit
-schedule
 requests
+pandas
+plotly
