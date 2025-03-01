@@ -222,7 +222,7 @@ def update_popularity():
         return page_id
 
     def create_week_entry(song_page_id, popularity_score, track_id):
-        # Füge hier einen Offset hinzu, damit der neue Eintrag immer später liegt
+        # Füge einen Offset hinzu, damit der neue Eintrag chronologisch zuletzt liegt
         now = datetime.datetime.now()
         now_with_offset = now + datetime.timedelta(seconds=1)
         now_iso = now_with_offset.isoformat()
@@ -278,9 +278,10 @@ def update_popularity():
     st.success("Popularity wurde aktualisiert!")
     status_text.empty()
     
-    # Berechne Growth für jeden Song und aktualisiere in Notion
+    # Growth-Berechnung: Für jeden Song sollen die beiden neuesten Messwerte verglichen werden,
+    # und der Growth-Wert wird in der neuesten Messung eingetragen.
     st.write("Berechne Growth für jeden Song...")
-    # Cache leeren, damit die neuesten Daten abgerufen werden
+    # Cache leeren, um die neuesten Daten zu erhalten
     get_tracking_entries.clear()
     updated_entries = get_tracking_entries()
     df_update = pd.DataFrame(updated_entries)
@@ -295,6 +296,7 @@ def update_popularity():
         else:
             growth = 0
         latest_entry_id = group.iloc[-1]["entry_id"]
+        st.write(f"Song {song_id}: Growth = {growth:.1f}% (Vergleich: {prev} -> {curr})")
         update_growth_for_measurement(latest_entry_id, growth)
 
 # --- Sidebar: Buttons und Filterformular ---
@@ -370,7 +372,6 @@ for row_df in rows:
             cover_url, spotify_link = get_spotify_data(row["spotify_track_id"])
         with cols[idx]:
             st.markdown(f"{row['track_name']}", unsafe_allow_html=True)
-            # Cover als klickbarer Link zu Spotify
             if cover_url and spotify_link:
                 st.markdown(f'<a href="{spotify_link}" target="_blank"><img src="{cover_url}" style="width:100%;" /></a>', unsafe_allow_html=True)
             elif cover_url:
@@ -381,7 +382,6 @@ for row_df in rows:
             st.markdown(f"<div style='text-align: center;'>Popularity: {row['last_popularity']:.1f}</div>", unsafe_allow_html=True)
             st.markdown(f"<div style='text-align: center; font-weight: bold;'>Growth: {row['cumulative_growth']:.1f}%</div>", unsafe_allow_html=True)
             
-            # Toggle-Checkbox zum Anzeigen/Ausblenden des Graphen
             show_graph = st.checkbox("Graph anzeigen / ausblenden", key=f"toggle_{row['song_id']}")
             if show_graph:
                 with st.spinner("Graph wird geladen..."):
