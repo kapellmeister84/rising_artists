@@ -82,22 +82,17 @@ def get_tracking_entries():
         entry_id = page.get("id")
         props = page.get("properties", {})
         pop = props.get("Popularity Score", {}).get("number")
-        # Datum aus dem Property "Date" – z. B. "2025/03/01 19:18"
+        # Lese das Datum aus dem Property "Date" (z.B. "2025/03/01 19:18" oder ISO-Format)
         date_str = props.get("Date", {}).get("date", {}).get("start")
         song_relations = props.get("Song", {}).get("relation", [])
         for relation in song_relations:
             song_id = relation.get("id")
-            entries.append({
-                "entry_id": entry_id,
-                "song_id": song_id,
-                "date": date_str,
-                "popularity": pop
-            })
+            entries.append({"entry_id": entry_id, "song_id": song_id, "date": date_str, "popularity": pop})
     return entries
 
 @st.cache_data(show_spinner=False)
 def get_spotify_data(spotify_track_id):
-    """Liefert Cover-URL und Spotify-Link (gecacht)."""
+    """Liefert (Cover-URL, Spotify-Link) für den gegebenen Track."""
     url = f"https://api.spotify.com/v1/tracks/{spotify_track_id}"
     response = requests.get(url, headers={"Authorization": f"Bearer {SPOTIFY_TOKEN}"})
     if response.status_code == 200:
@@ -150,15 +145,15 @@ def get_metadata_from_tracking_db():
         }
     return metadata
 
-# Neue Funktion: Graph für alle Messpunkte eines Songs erstellen
+# Neue Funktion: Erstelle einen Graphen, der alle Messpunkte eines Songs anzeigt
 def build_song_graph(song_id):
-    # Hole alle Einträge für diesen Song
+    # Hole alle Einträge für den gegebenen Song aus der Weeks-Datenbank
     entries = [e for e in get_tracking_entries() if e["song_id"] == song_id]
     if not entries:
         return None
     df_song = pd.DataFrame(entries)
-    # Parst die Datumsspalte; Notion liefert z. B. "2025/03/01 19:18"
-    df_song["date"] = pd.to_datetime(df_song["date"], errors="coerce", format="%Y/%m/%d %H:%M").dt.tz_localize(None)
+    # Datum automatisch parsen (ohne explizites Format) und tz-naiv machen
+    df_song["date"] = pd.to_datetime(df_song["date"], errors="coerce").dt.tz_localize(None)
     df_song = df_song.sort_values("date")
     if len(df_song) == 1:
         fig = px.scatter(df_song, x="date", y="popularity",
@@ -171,7 +166,7 @@ def build_song_graph(song_id):
                       markers=True)
     return fig
 
-# --- Platzhalterfunktionen für Buttons (Bleibt unverändert) ---
+# --- Platzhalterfunktionen für Buttons ---
 def get_new_music():
     st.write("Rufe neue Musik aus Playlisten ab...")
     # Hier deinen Code einfügen...
@@ -202,7 +197,7 @@ with st.sidebar:
 
 st.title("Song Tracking Übersicht")
 
-# 1. Oben: Top 10 Songs – Hier wird für die Übersicht der letzte Messwert und das kumulative Wachstum berechnet
+# 1. Oben: Top 10 Songs – Hier wird für jeden Song das kumulative Wachstum über alle Messungen berechnet
 st.header("Top 10 Songs – Wachstum über alle Messungen")
 
 tracking_entries = get_tracking_entries()
@@ -213,14 +208,14 @@ if df.empty:
     st.write("Keine Tracking-Daten gefunden.")
     st.stop()
 
-# Hier wird das Datum automatisch geparst (Notion liefert meist ISO-Strings)
+# Datum parsen – hier wird automatisch erkannt, und wir wandeln in tz-naive Timestamps um
 df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.tz_localize(None)
 df["track_name"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("track_name", "Unbekannter Track"))
 df["artist"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("artist", "Unbekannt"))
 df["release_date"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("release_date", ""))
 df["spotify_track_id"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("spotify_track_id", ""))
 
-# Für die Top 10 werden alle Messungen verwendet
+# Für die Top 10 werden alle Einträge verwendet
 df_all = df[df["date"].notnull()]
 
 cumulative = []
@@ -273,7 +268,7 @@ for row_df in rows:
                 st.markdown(f"<div style='text-align: center;'><a href='{spotify_link}' target='_blank'>Spotify Link</a></div>", unsafe_allow_html=True)
             st.markdown(f"<div style='text-align: center; font-weight: bold;'>Growth: {row['cumulative_growth']:.1f}%</div>", unsafe_allow_html=True)
 
-# 2. Unterhalb: Filterergebnisse – Hier wird im Expander für jeden Song der Verlauf aller Messpunkte angezeigt
+# 2. Unterhalb: Filterergebnisse – Hier wird im Expander der Graph für alle Messpunkte angezeigt
 st.header("Songs filtern")
 
 if submitted:
