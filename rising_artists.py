@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 st.set_page_config(layout="wide")
 
 # === Notion-Konfiguration ===
-tracking_db_id = "1a9b6204cede80e29338ede2c76999f2"  # Weeks-Datenbank (enthält "Date", "Popularity Score" und Relation "Song")
+tracking_db_id = "1a9b6204cede80e29338ede2c76999f2"  # Weeks-Datenbank mit "Date", "Popularity Score" und Relation "Song"
 notion_secret = "secret_yYvZbk7zcKy0Joe3usdCHMbbZmAFHnCKrF7NvEkWY6E"
 notion_query_endpoint = "https://api.notion.com/v1/databases"
 notion_page_endpoint = "https://api.notion.com/v1/pages"
@@ -82,7 +82,6 @@ def get_tracking_entries():
         entry_id = page.get("id")
         props = page.get("properties", {})
         pop = props.get("Popularity Score", {}).get("number")
-        # Lese das Datum aus dem Property "Date" (z.B. "2025/03/01 19:18" oder ISO-Format)
         date_str = props.get("Date", {}).get("date", {}).get("start")
         song_relations = props.get("Song", {}).get("relation", [])
         for relation in song_relations:
@@ -145,17 +144,21 @@ def get_metadata_from_tracking_db():
         }
     return metadata
 
-# Neue Funktion: Erstelle einen Graphen, der alle Messpunkte eines Songs anzeigt
+# Neue Funktion: Baue den Graphen, der alle Messpunkte eines Songs anzeigt
 def build_song_graph(song_id):
-    # Hole alle Einträge für den gegebenen Song aus der Weeks-Datenbank
+    # Hole alle Einträge aus der Weeks-Datenbank für diesen Song
     entries = [e for e in get_tracking_entries() if e["song_id"] == song_id]
-    if not entries:
+    # Debug: Ausgabe der Anzahl Messpunkte
+    st.write(f"Song {song_id} hat {len(entries)} Messpunkte.")
+    if not entries or len(entries) == 0:
         return None
     df_song = pd.DataFrame(entries)
-    # Datum automatisch parsen (ohne explizites Format) und tz-naiv machen
+    # Datum parsen – Notion liefert üblicherweise ISO-Strings, daher ohne explizites Format
     df_song["date"] = pd.to_datetime(df_song["date"], errors="coerce").dt.tz_localize(None)
     df_song = df_song.sort_values("date")
-    if len(df_song) == 1:
+    # Debug: Ausgabe der geparsten Daten
+    st.write(df_song[["date", "popularity"]])
+    if df_song["date"].nunique() <= 1:
         fig = px.scatter(df_song, x="date", y="popularity",
                          title="Popularity Verlauf",
                          labels={"date": "Datum", "popularity": "Popularity Score"})
@@ -197,7 +200,7 @@ with st.sidebar:
 
 st.title("Song Tracking Übersicht")
 
-# 1. Oben: Top 10 Songs – Hier wird für jeden Song das kumulative Wachstum über alle Messungen berechnet
+# 1. Oben: Top 10 Songs – kumulatives Wachstum über alle Messungen
 st.header("Top 10 Songs – Wachstum über alle Messungen")
 
 tracking_entries = get_tracking_entries()
@@ -208,14 +211,14 @@ if df.empty:
     st.write("Keine Tracking-Daten gefunden.")
     st.stop()
 
-# Datum parsen – hier wird automatisch erkannt, und wir wandeln in tz-naive Timestamps um
+# Datum parsen – automatische Erkennung, dann tz-naiv
 df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.tz_localize(None)
 df["track_name"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("track_name", "Unbekannter Track"))
 df["artist"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("artist", "Unbekannt"))
 df["release_date"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("release_date", ""))
 df["spotify_track_id"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("spotify_track_id", ""))
 
-# Für die Top 10 werden alle Einträge verwendet
+# Verwende alle Einträge mit gültigen Datumswerten
 df_all = df[df["date"].notnull()]
 
 cumulative = []
@@ -268,7 +271,7 @@ for row_df in rows:
                 st.markdown(f"<div style='text-align: center;'><a href='{spotify_link}' target='_blank'>Spotify Link</a></div>", unsafe_allow_html=True)
             st.markdown(f"<div style='text-align: center; font-weight: bold;'>Growth: {row['cumulative_growth']:.1f}%</div>", unsafe_allow_html=True)
 
-# 2. Unterhalb: Filterergebnisse – Hier wird im Expander der Graph für alle Messpunkte angezeigt
+# 2. Unterhalb: Filterergebnisse – Graph für alle Messpunkte eines Songs im Expander
 st.header("Songs filtern")
 
 if submitted:
