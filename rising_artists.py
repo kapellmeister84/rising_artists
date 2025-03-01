@@ -6,7 +6,7 @@ import pandas as pd
 import plotly.express as px
 
 # === Notion Konfiguration ===
-tracking_db_id = "1a9b6204cede80e29338ede2c76999f2"  # Tracking-Datenbank (enthält Rollups für Artist und Release Date, Relation Song)
+tracking_db_id = "1a9b6204cede80e29338ede2c76999f2"  # Tracking-Datenbank (enthält Rollups für "Artist" und "Release Date", Relation "Song")
 notion_secret = "secret_yYvZbk7zcKy0Joe3usdCHMbbZmAFHnCKrF7NvEkWY6E"
 notion_query_endpoint = "https://api.notion.com/v1/databases"
 notion_page_endpoint = "https://api.notion.com/v1/pages"
@@ -39,7 +39,7 @@ def parse_rollup_text(rollup):
                     texts.append(date_info["start"])
     return " ".join(texts).strip()
 
-# Hole den Track Name von der verknüpften Seite (Songs-Datenbank)
+# Funktion: Hole den Track Name von der verknüpften Seite (Songs-Datenbank)
 def get_track_name_from_page(page_id):
     url = f"{notion_page_endpoint}/{page_id}"
     response = requests.get(url, headers=notion_headers)
@@ -50,7 +50,7 @@ def get_track_name_from_page(page_id):
             return "".join([t.get("plain_text", "") for t in title_prop]).strip()
     return "Unbekannter Track"
 
-# Hole den Spotify Track ID aus der verknüpften Seite (angenommen in Property "Track ID" als Rich Text)
+# Funktion: Hole den Spotify Track ID von der verknüpften Seite (Songs-Datenbank)
 def get_track_id_from_page(page_id):
     url = f"{notion_page_endpoint}/{page_id}"
     response = requests.get(url, headers=notion_headers)
@@ -61,11 +61,7 @@ def get_track_id_from_page(page_id):
             return "".join([t.get("plain_text", "") for t in text_prop]).strip()
     return ""
 
-# Hole Metadaten aus der Tracking-Datenbank.
-# Annahme: In der Tracking-DB sind folgende Properties vorhanden:
-# - "Song": Relation (verweist auf die Song-Seite in der Songs-DB)
-# - "Artist": Rollup (enthält den Artist-Namen als Text)
-# - "Release Date": Rollup (enthält das Release Date)
+# Funktion: Hole Metadaten (Track Name, Artist, Release Date, Spotify Track ID) aus der Tracking-Datenbank
 def get_metadata_from_tracking_db():
     url = f"{notion_query_endpoint}/{tracking_db_id}/query"
     response = requests.post(url, headers=notion_headers)
@@ -96,7 +92,7 @@ def get_metadata_from_tracking_db():
         }
     return metadata
 
-# Hole alle Tracking-Einträge (Messungen) aus der Tracking-Datenbank
+# Funktion: Lade alle Tracking-Einträge (Messungen) aus der Tracking-Datenbank
 def get_tracking_entries():
     url = f"{notion_query_endpoint}/{tracking_db_id}/query"
     response = requests.post(url, headers=notion_headers)
@@ -149,13 +145,12 @@ if df.empty:
     st.stop()
 
 df["date"] = pd.to_datetime(df["date"], errors="coerce")
-# Ergänze die Metadaten anhand der Song-Relation (Schlüssel: Song-ID)
 df["track_name"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("track_name", "Unbekannter Track"))
 df["artist"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("artist", "Unbekannt"))
 df["release_date"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("release_date", ""))
 df["spotify_track_id"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("spotify_track_id", ""))
 
-# Berechne pro Song den letzten Messwert und den Growth zwischen den letzten beiden Messungen
+# Berechne für jeden Song den letzten Messwert und den Growth zwischen den letzten beiden Messungen
 last_data = []
 for song_id, group in df.groupby("song_id"):
     group = group.sort_values("date")
@@ -193,22 +188,18 @@ elif sort_option == "Release Date":
 
 st.write("Gefilterte Songs:")
 for idx, row in filtered_df.iterrows():
-    # Hole Spotify-Daten: Cover und Link (sofern spotify_track_id vorhanden)
     cover_url, spotify_link = ("", "")
     if row["spotify_track_id"]:
         cover_url, spotify_link = get_spotify_data(row["spotify_track_id"])
     with st.container():
-        # Anzeige der Song-Informationen als Liste
-        st.markdown(f"**{row['track_name']}** – {row['artist']}  
+        st.markdown(f"""**{row['track_name']}** – {row['artist']}  
 Release Date: {row['release_date']}  
-Popularity: {row['last_popularity']:.1f} | Growth: {row['growth']:.1f}%")
+Popularity: {row['last_popularity']:.1f} | Growth: {row['growth']:.1f}%""")
         if cover_url:
             st.image(cover_url, width=100)
         if spotify_link:
             st.markdown(f"[Spotify Link]({spotify_link})")
-        # Expander für den Graphen der Tracking-History
         with st.expander("Tracking-History anzeigen"):
-            # Zeitraum-Filter: Berechne start_time als timezone-aware Timestamp in UTC
             now = pd.Timestamp.now(tz='UTC')
             start_time = now - pd.Timedelta(days=days)
             song_history = df[(df["song_id"] == row["song_id"]) & (df["date"] >= start_time)].sort_values("date")
