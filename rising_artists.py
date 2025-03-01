@@ -43,7 +43,6 @@ def parse_rollup_text(rollup):
                     texts.append(date_info["start"])
     return " ".join(texts).strip()
 
-@st.cache_data(show_spinner=False)
 def get_track_name_from_page(page_id):
     url = f"{notion_page_endpoint}/{page_id}"
     response = requests.get(url, headers=notion_headers)
@@ -54,7 +53,6 @@ def get_track_name_from_page(page_id):
             return "".join([t.get("plain_text", "") for t in title_prop]).strip()
     return "Unbekannter Track"
 
-@st.cache_data(show_spinner=False)
 def get_track_id_from_page(page_id):
     url = f"{notion_page_endpoint}/{page_id}"
     response = requests.get(url, headers=notion_headers)
@@ -90,8 +88,13 @@ def get_all_tracking_pages():
         start_cursor = data.get("next_cursor")
     return pages
 
+@st.cache_data(show_spinner=False)
 def get_tracking_entries():
-    """Extrahiert Daten aus allen Tracking-Seiten (nutzt den gecachten get_all_tracking_pages())."""
+    """Extrahiert aus allen Seiten der Tracking-Datenbank (cached):
+      - Popularity Score,
+      - Zeitstempel aus dem Property "Date",
+      - die Song-ID aus der Relation "Song".
+    """
     pages = get_all_tracking_pages()
     entries = []
     for page in pages:
@@ -112,6 +115,7 @@ def get_tracking_entries():
 
 @st.cache_data(show_spinner=False)
 def get_spotify_data(spotify_track_id):
+    """Liefert Cover und Spotify-Link (gecacht)."""
     url = f"https://api.spotify.com/v1/tracks/{spotify_track_id}"
     response = requests.get(url, headers={"Authorization": f"Bearer {SPOTIFY_TOKEN}"})
     if response.status_code == 200:
@@ -125,6 +129,11 @@ def get_spotify_data(spotify_track_id):
 
 @st.cache_data(show_spinner=False)
 def get_metadata_from_tracking_db():
+    """
+    Extrahiert aus allen Seiten der Tracking-Datenbank (cached):
+      - Den Trackname, Artist, Release Date,
+      - die Spotify Track ID aus dem Property "Track ID".
+    """
     pages = get_all_tracking_pages()
     metadata = {}
     with ThreadPoolExecutor() as executor:
@@ -265,10 +274,12 @@ def update_popularity():
     st.success("Popularity wurde aktualisiert!")
     status_text.empty()
     
-    # Growth-Berechnung: Vergleiche die beiden neuesten Messwerte jedes Songs und update den Growth-Wert
+    # Growth-Berechnung: Für jeden Song werden die beiden neuesten Messwerte verglichen und der Growth-Wert
+    # wird in die neueste Messung geschrieben.
     st.write("Berechne Growth für jeden Song...")
-    # Cache leeren, um die neuesten Daten zu erhalten
-    get_tracking_entries.clear()
+    # Cache leeren, um die aktuellsten Daten zu erhalten
+    st.cache_data.clear(get_all_tracking_pages)
+    st.cache_data.clear(get_tracking_entries)
     updated_entries = get_tracking_entries()
     df_update = pd.DataFrame(updated_entries)
     df_update["date"] = pd.to_datetime(df_update["date"], errors="coerce")
@@ -369,7 +380,6 @@ for row_df in rows:
             st.markdown(f"<div style='text-align: center;'>Popularity: {row['last_popularity']:.1f}</div>", unsafe_allow_html=True)
             st.markdown(f"<div style='text-align: center; font-weight: bold;'>Growth: {row['cumulative_growth']:.1f}%</div>", unsafe_allow_html=True)
             
-            # Toggle-Checkbox zum Anzeigen/Ausblenden des Graphen
             show_graph = st.checkbox("Graph anzeigen / ausblenden", key=f"toggle_{row['song_id']}")
             if show_graph:
                 with st.spinner("Graph wird geladen..."):
