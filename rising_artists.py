@@ -75,7 +75,7 @@ def update_growth_for_measurement(entry_id, growth):
 def get_tracking_entries():
     """
     Holt Einträge aus der Tracking-Datenbank.
-    Hier verwenden wir den systemeigenen "created_time", der dem "Date created" entspricht.
+    Der Zeitstempel wird jetzt aus dem Property "date" entnommen.
     """
     url = f"{notion_query_endpoint}/{tracking_db_id}/query"
     response = requests.post(url, headers=notion_headers)
@@ -86,8 +86,8 @@ def get_tracking_entries():
         entry_id = page.get("id")
         props = page.get("properties", {})
         pop = props.get("Popularity Score", {}).get("number")
-        # Nutze den systemeigenen Zeitstempel, der "created_time" enthält:
-        date_str = page.get("created_time")
+        # Nutze hier das Property "date"
+        date_str = props.get("Date", {}).get("date", {}).get("start")
         song_relations = props.get("Song", {}).get("relation", [])
         for relation in song_relations:
             song_id = relation.get("id")
@@ -132,7 +132,7 @@ def get_metadata_from_tracking_db():
             related_page_id = song_relations[0].get("id")
             track_name = track_names.get(related_page_id, "Unbekannter Track")
             notion_track_id = get_track_id_from_page(related_page_id)
-            spotify_track_id = notion_track_id  # Wir nutzen denselben Wert
+            spotify_track_id = notion_track_id
             key = related_page_id
         else:
             track_name = "Unbekannter Track"
@@ -160,10 +160,8 @@ if df.empty:
     st.write("Keine Tracking-Daten gefunden.")
     st.stop()
 
-# Wir parsen den Zeitstempel unter Annahme, dass er in ISO-Format vorliegt (UTC)
-df["date"] = pd.to_datetime(df["date"], utc=True)
-# Optional: Konvertiere in lokale Zeit (entfernt tzinfo)
-df["date"] = df["date"].dt.tz_convert(None)
+# Den Zeitstempel parsen
+df["date"] = pd.to_datetime(df["date"], errors="coerce")
 df["track_name"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("track_name", "Unbekannter Track"))
 df["artist"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("artist", "Unbekannt"))
 df["release_date"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("release_date", ""))
@@ -397,8 +395,7 @@ Popularity: {row['last_popularity']:.1f} | Growth: {row['growth']:.1f}%""")
             if spotify_link:
                 st.markdown(f"[Spotify Link]({spotify_link})")
             with st.expander(f"{row['track_name']} - {row['artist']} anzeigen"):
-                # Nutze die Notion Track ID, um alle Messungen (über alle Seiten) abzurufen
-                # Damit werden alle Messungen, die denselben Song (Notion Track ID) haben, chronologisch sortiert
+                # Hole alle Messungen, die denselben Song (Notion Track ID) haben, chronologisch sortiert.
                 notion_id = metadata.get(row["song_id"], {}).get("notion_track_id", row["song_id"])
                 song_history = df_all[df_all["notion_track_id"] == notion_id].sort_values("date", ascending=True).copy()
                 if song_history["date"].duplicated().any():
