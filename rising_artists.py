@@ -145,15 +145,15 @@ def get_metadata_from_tracking_db():
 
 # --- Neue Funktionen für Buttons ---
 def get_new_music():
-    # Platzhalter-Funktion zum Abrufen neuer Musik aus Playlisten
+    # Platzhalter-Funktion: Songs aus Playlisten holen und in die Weeks-Datenbank eintragen
     st.write("Neue Musik aus Playlisten wird abgerufen...")
-    # Hier deinen Code einfügen...
+    # Hier eigenen Code einfügen...
     st.success("Neue Musik wurde hinzugefügt.")
 
 def update_popularity():
-    # Platzhalter-Funktion zum Aktualisieren der Popularity (neue Messung in der Weeks-Datenbank)
-    st.write("Aktualisiere Popularity in der Weeks-Datenbank...")
-    # Hier deinen Code einfügen...
+    # Platzhalter-Funktion: Neue Popularity-Messung in die Weeks-Datenbank eintragen
+    st.write("Popularity wird aktualisiert...")
+    # Hier eigenen Code einfügen...
     st.success("Popularity wurde aktualisiert.")
 
 # --- Sidebar Buttons ---
