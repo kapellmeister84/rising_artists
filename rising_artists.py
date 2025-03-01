@@ -73,7 +73,7 @@ def update_growth_for_measurement(entry_id, growth):
     response = requests.patch(url, headers=notion_headers, data=json.dumps(data))
     response.raise_for_status()
 
-# Funktion: Hole alle Tracking-Einträge (Messungen) aus der Tracking-Datenbank (ohne Cache, damit Popularity aktuell bleibt)
+# Funktion: Hole alle Tracking-Einträge aus der Tracking-Datenbank (ohne Caching, damit Popularity aktuell bleibt)
 def get_tracking_entries():
     url = f"{notion_query_endpoint}/{tracking_db_id}/query"
     response = requests.post(url, headers=notion_headers)
@@ -158,6 +158,7 @@ df = pd.DataFrame(tracking_entries)
 if df.empty:
     st.write("Keine Tracking-Daten gefunden.")
     st.stop()
+
 df["date"] = pd.to_datetime(df["date"], errors="coerce")
 df["track_name"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("track_name", "Unbekannter Track"))
 df["artist"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("artist", "Unbekannt"))
@@ -183,6 +184,7 @@ for song_id, group in df_2days.groupby("song_id"):
         "artist": meta["artist"],
         "release_date": meta["release_date"],
         "spotify_track_id": meta["spotify_track_id"],
+        "last_popularity": last_pop,
         "cumulative_growth": cum_growth
     })
 cum_df = pd.DataFrame(cumulative)
@@ -198,12 +200,17 @@ for idx, row in top10.iterrows():
             st.image(cover_url, use_container_width=True)
         else:
             st.write("Kein Cover")
-        st.markdown(f"**{row['track_name']}**")
-        st.markdown(f"*{row['artist']}*")
-        st.markdown(f"Release: {row['release_date']}")
+        # Kürze zu lange Titel und zentriere Text
+        title = row["track_name"]
+        if len(title) > 40:
+            title = title[:40] + "..."
+        st.markdown(f"<div style='text-align: center; font-weight: bold;'>{title}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='text-align: center; font-style: italic;'>{row['artist']}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='text-align: center;'>Release: {row['release_date']}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='text-align: center;'>Popularity: {row['last_popularity']:.1f}</div>", unsafe_allow_html=True)
         if spotify_link:
-            st.markdown(f"[Spotify Link]({spotify_link})")
-        st.markdown(f"**Growth:** {row['cumulative_growth']:.1f}%")
+            st.markdown(f"<div style='text-align: center;'><a href='{spotify_link}' target='_blank'>Spotify Link</a></div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='text-align: center; font-weight: bold;'>Growth: {row['cumulative_growth']:.1f}%</div>", unsafe_allow_html=True)
 
 # 2. Unterhalb: Ergebnisse erst anzeigen, wenn Filter gesetzt wurden
 st.header("Songs filtern")
