@@ -66,7 +66,6 @@ def get_track_id_from_page(page_id):
     return ""
 
 def update_growth_for_measurement(entry_id, growth):
-    # Aktualisiert in Notion die Zahleneigenschaft "Growth" für einen Eintrag.
     url = f"{notion_page_endpoint}/{entry_id}"
     payload = {"properties": {"Growth": {"number": growth}}}
     response = requests.patch(url, headers=notion_headers, json=payload)
@@ -223,7 +222,10 @@ def update_popularity():
         return page_id
 
     def create_week_entry(song_page_id, popularity_score, track_id):
-        now_iso = datetime.datetime.now().isoformat()
+        # Füge hier einen Offset hinzu, damit der neue Eintrag immer später liegt
+        now = datetime.datetime.now()
+        now_with_offset = now + datetime.timedelta(seconds=1)
+        now_iso = now_with_offset.isoformat()
         payload = {
             "parent": { "database_id": week_database_id },
             "properties": {
