@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 st.set_page_config(layout="wide")
 
 # === Notion-Konfiguration ===
-tracking_db_id = "1a9b6204cede80e29338ede2c76999f2"
+tracking_db_id = "1a9b6204cede80e29338ede2c76999f2"  # Tracking-Datenbank (enthält Rollups für "Artist" und "Release Date", Relation "Song")
 notion_secret = "secret_yYvZbk7zcKy0Joe3usdCHMbbZmAFHnCKrF7NvEkWY6E"
 notion_query_endpoint = "https://api.notion.com/v1/databases"
 notion_page_endpoint = "https://api.notion.com/v1/pages"
@@ -71,7 +71,7 @@ def update_growth_for_measurement(entry_id, growth):
     response.raise_for_status()
 
 def get_tracking_entries():
-    """Popularity muss immer aktuell sein, daher kein Caching."""
+    # Kein Caching, da Popularity stets aktuell sein soll.
     url = f"{notion_query_endpoint}/{tracking_db_id}/query"
     response = requests.post(url, headers=notion_headers)
     response.raise_for_status()
@@ -90,7 +90,6 @@ def get_tracking_entries():
 
 @st.cache_data(show_spinner=False)
 def get_spotify_data(spotify_track_id):
-    """Cover & Spotify Link via Spotify API (wird gecacht)."""
     url = f"https://api.spotify.com/v1/tracks/{spotify_track_id}"
     response = requests.get(url, headers={"Authorization": f"Bearer {SPOTIFY_TOKEN}"})
     if response.status_code == 200:
@@ -104,7 +103,6 @@ def get_spotify_data(spotify_track_id):
 
 @st.cache_data(show_spinner=False)
 def get_metadata_from_tracking_db():
-    """Statische Metadaten (Artist, Release Date, Spotify Track ID) werden gecacht."""
     url = f"{notion_query_endpoint}/{tracking_db_id}/query"
     response = requests.post(url, headers=notion_headers)
     response.raise_for_status()
@@ -119,7 +117,6 @@ def get_metadata_from_tracking_db():
                 related_page_id = song_relations[0].get("id")
                 futures[related_page_id] = executor.submit(get_track_name_from_page, related_page_id)
         track_names = {key: future.result() for key, future in futures.items()}
-
     for page in data.get("results", []):
         props = page.get("properties", {})
         song_relations = props.get("Song", {}).get("relation", [])
@@ -144,81 +141,14 @@ def get_metadata_from_tracking_db():
         }
     return metadata
 
-# === Haupt-App ===
+# === Streamlit App ===
+
 st.title("Song Tracking Übersicht")
 
-# CSS für das Grid + Hover-Overlay
-custom_css = """
-<style>
-.song-grid {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 1rem;
-}
-
-.song-card {
-  position: relative;
-  width: 100%;
-  height: 300px;
-  overflow: hidden;
-  text-align: center;
-  border: 1px solid #ddd;
-  border-radius: 5px;
-}
-
-.song-card img {
-  width: 100%;
-  height: auto;
-  max-height: 100%;
-  display: block;
-  object-fit: cover;
-}
-
-.song-info-overlay {
-  position: absolute;
-  top: 0; left: 0;
-  width: 100%;
-  height: 100%;
-  background-color: rgba(0,0,0,0.6);
-  color: #fff;
-  padding: 0.5rem;
-  box-sizing: border-box;
-  display: none;
-  overflow: auto;
-}
-
-.song-card:hover .song-info-overlay {
-  display: block;
-}
-
-.song-info-overlay .info-text {
-  margin-top: 10%;
-  text-align: center;
-  padding: 0.5rem;
-  line-height: 1.2;
-  font-size: 0.9rem;
-  word-wrap: break-word;
-}
-
-.song-title {
-  font-weight: bold;
-  margin-bottom: 0.5rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  width: 100%;
-  display: inline-block;
-}
-</style>
-"""
-st.markdown(custom_css, unsafe_allow_html=True)
-
-# 1. Top 10 Songs mit größtem Wachstum über 2 Tage
+# 1. Oben: Top 10 Songs mit größtem kumulativem Wachstum über 2 Tage (Gallery)
 st.header("Top 10 Songs – Wachstum über 2 Tage")
-
 tracking_entries = get_tracking_entries()
 metadata = get_metadata_from_tracking_db()
-
 df = pd.DataFrame(tracking_entries)
 if df.empty:
     st.write("Keine Tracking-Daten gefunden.")
@@ -230,12 +160,10 @@ df["artist"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("artist", "Un
 df["release_date"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("release_date", ""))
 df["spotify_track_id"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("spotify_track_id", ""))
 
-# 2-Tage-Window
 now = pd.Timestamp.now(tz='UTC')
 start_2days = now - pd.Timedelta(days=2)
 df_2days = df[df["date"] >= start_2days]
 
-# Kumulatives Wachstum berechnen
 cumulative = []
 for song_id, group in df_2days.groupby("song_id"):
     group = group.sort_values("date")
@@ -244,8 +172,6 @@ for song_id, group in df_2days.groupby("song_id"):
     first_pop = group.iloc[0]["popularity"]
     last_pop = group.iloc[-1]["popularity"]
     cum_growth = ((last_pop - first_pop) / first_pop) * 100 if first_pop and first_pop != 0 else 0
-    # Letzten Popularity-Wert merken
-    last_pop_val = group.iloc[-1]["popularity"]
     meta = metadata.get(song_id, {"track_name": "Unbekannter Track", "artist": "Unbekannt", "release_date": "", "spotify_track_id": ""})
     cumulative.append({
         "song_id": song_id,
@@ -253,53 +179,66 @@ for song_id, group in df_2days.groupby("song_id"):
         "artist": meta["artist"],
         "release_date": meta["release_date"],
         "spotify_track_id": meta["spotify_track_id"],
-        "last_popularity": last_pop_val,
+        "last_popularity": last_pop,
         "cumulative_growth": cum_growth
     })
 cum_df = pd.DataFrame(cumulative)
 top10 = cum_df.sort_values("cumulative_growth", ascending=False).head(10)
 
-# Erzeuge das Grid via HTML
+# Erzeuge ein Grid (feste 5 Spalten) für die Top 10
+custom_css = """
+<style>
+.song-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 1rem;
+}
+.song-card {
+  text-align: center;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  padding: 0.5rem;
+  height: 320px;
+  box-sizing: border-box;
+}
+.song-card img {
+  width: 100%;
+  height: auto;
+  max-height: 200px;
+  object-fit: cover;
+}
+.song-info {
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+}
+</style>
+"""
+st.markdown(custom_css, unsafe_allow_html=True)
+
 cards_html = ['<div class="song-grid">']
 for _, row in top10.iterrows():
     cover_url, spotify_link = ("", "")
     if row["spotify_track_id"]:
         cover_url, spotify_link = get_spotify_data(row["spotify_track_id"])
-    # Overlays
-    title_html = row["track_name"]
-    if len(title_html) > 40:
-        title_html = title_html[:40] + "..."
-    artist_html = row["artist"]
-    release_html = row["release_date"]
-    pop_val = row["last_popularity"]
-    growth_val = row["cumulative_growth"]
-
-    # Song-Karte mit Hover-Overlay
-    card_html = f"""
+    card = f"""
     <div class="song-card">
-      <img src="{cover_url}" alt="Cover" />
-      <div class="song-info-overlay">
-        <div class="info-text">
-          <div class="song-title">{title_html}</div>
-          <div>{artist_html}</div>
-          <div>Release: {release_html}</div>
-          <div>Popularity: {pop_val:.1f}</div>
-          <div>Growth: {growth_val:.1f}%</div>
-    """
-    if spotify_link:
-        card_html += f'<div><a href="{spotify_link}" target="_blank" style="color: #fff; text-decoration: underline;">Spotify Link</a></div>'
-    card_html += """
-        </div>
+      <img src="{cover_url}" alt="Cover">
+      <div class="song-info">
+        <strong>{row['track_name'][:40]}{'...' if len(row['track_name'])>40 else ''}</strong><br>
+        <em>{row['artist']}</em><br>
+        Release: {row['release_date']}<br>
+        Popularity: {row['last_popularity']:.1f}<br>
+        Growth: {row['cumulative_growth']:.1f}%<br>
+        {'<a href="'+spotify_link+'" target="_blank">Spotify Link</a>' if spotify_link else ''}
       </div>
     </div>
     """
-    cards_html.append(card_html)
-cards_html.append('</div>')
+    cards_html.append(card)
+cards_html.append("</div>")
 st.markdown("".join(cards_html), unsafe_allow_html=True)
 
 # 2. Unterhalb: Ergebnisse erst anzeigen, wenn Filter gesetzt wurden
 st.header("Songs filtern")
-
 with st.sidebar.form("filter_form"):
     search_query = st.text_input("Song/Artist Suche", "")
     filter_pop_range = st.slider("Popularity Range (letzter Messwert)", 0, 100, (0, 100), step=1, key="filter_pop")
@@ -311,7 +250,6 @@ with st.sidebar.form("filter_form"):
     submitted = st.form_submit_button("Filter anwenden")
 
 if submitted:
-    # Growth zwischen letzter und vorletzter Messung
     last_data = []
     for song_id, group in df.groupby("song_id"):
         group = group.sort_values("date")
