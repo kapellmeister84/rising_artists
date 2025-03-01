@@ -126,12 +126,13 @@ elif sort_option == "Release Date":
     filtered_df = filtered_df.sort_values("release_date_dt", ascending=True)
 
 st.write("Gefilterte Songs:")
-# Zeige tatsächliche Songnamen, Artist, Popularity und Release Date
 st.dataframe(filtered_df[["song_title", "artist", "last_popularity", "release_date", "growth"]])
 
-st.write(f"Graphen der Tracking-History (Zeitraum: Letzte {timeframe_option}) für gefilterte Songs:")
+# Zeitraum-Filter: Berechne start_time als Timestamp
 now = datetime.datetime.now()
-start_time = now - datetime.timedelta(days=days)
+start_time = pd.Timestamp(now - datetime.timedelta(days=days))
+
+st.write(f"Graphen der Tracking-History (Zeitraum: Letzte {timeframe_option}) für gefilterte Songs:")
 # Für jeden gefilterten Song
 for idx, row in filtered_df.iterrows():
     song_id = row["song_id"]
@@ -140,7 +141,7 @@ for idx, row in filtered_df.iterrows():
     if song_history.empty:
         st.write(f"Keine Tracking-Daten für {row['song_title']} im gewählten Zeitraum.")
         continue
-    # Falls nur ein Messwert vorliegt, als Scatter-Plot darstellen
+    # Wenn nur ein Messwert vorhanden ist, als Scatter-Plot darstellen
     if len(song_history) == 1:
         fig = px.scatter(song_history, x="date", y="popularity",
                          title=f"{row['song_title']} - {row['artist']}",
