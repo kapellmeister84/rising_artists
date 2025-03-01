@@ -143,23 +143,16 @@ def get_metadata_from_tracking_db():
         }
     return metadata
 
-# === Platzhalterfunktionen für Buttons ===
+# --- Platzhalterfunktionen für Buttons ---
 def get_new_music():
     st.write("Rufe neue Musik aus Playlisten ab...")
-    # Hier deinen Code einfügen
+    # Hier deinen Code einfügen...
     st.success("Neue Musik hinzugefügt!")
 
 def update_popularity():
     st.write("Füge neue Popularity-Messung hinzu...")
-    # Hier deinen Code einfügen
-    st.success("Popularity aktualisiert!")
-
-# --- Sidebar: Buttons + Filter
-st.sidebar.markdown("## Automatische Updates")
-if st.sidebar.button("Get New Music"):
-    get_new_music()
-if st.sidebar.button("Update Popularity"):
-    update_popularity()
+    # Hier deinen Code einfügen...
+    st.success("Popularity wurde aktualisiert!")
 
 st.title("Song Tracking Übersicht")
 
@@ -241,7 +234,7 @@ st.markdown(css_code, unsafe_allow_html=True)
 
 cards_html = ["<div class='song-grid'>"]
 for _, row in top10.iterrows():
-    cover_url, spotify_link = "", ""
+    cover_url, spotify_link = ("", "")
     if row["spotify_track_id"]:
         cover_url, spotify_link = get_spotify_data(row["spotify_track_id"])
 
@@ -281,6 +274,13 @@ with st.sidebar.form("filter_form"):
     filter_timeframe_days = {"3 Tage": 3, "1 Woche": 7, "2 Wochen": 14, "3 Wochen": 21}
     filter_days = filter_timeframe_days[filter_timeframe_option]
     submitted = st.form_submit_button("Filter anwenden")
+
+# Die Buttons kommen ganz unten in die Sidebar
+st.sidebar.markdown("---")
+if st.sidebar.button("Get New Music"):
+    get_new_music()
+if st.sidebar.button("Update Popularity"):
+    update_popularity()
 
 if submitted:
     last_data = []
