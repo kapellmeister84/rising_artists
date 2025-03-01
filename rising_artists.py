@@ -73,7 +73,8 @@ def update_growth_for_measurement(entry_id, growth):
     response.raise_for_status()
 
 def get_tracking_entries():
-    """Holt Einträge aus der Tracking-Datenbank."""
+    """Holt Einträge aus der Tracking-Datenbank.
+       Der Zeitstempel wird nun aus dem Property 'Date created' entnommen."""
     url = f"{notion_query_endpoint}/{tracking_db_id}/query"
     response = requests.post(url, headers=notion_headers)
     response.raise_for_status()
@@ -83,7 +84,8 @@ def get_tracking_entries():
         entry_id = page.get("id")
         props = page.get("properties", {})
         pop = props.get("Popularity Score", {}).get("number")
-        date_str = props.get("Date", {}).get("date", {}).get("start")
+        # Den Zeitstempel jetzt aus 'Date created' auslesen:
+        date_str = props.get("Date created", {}).get("date", {}).get("start")
         song_relations = props.get("Song", {}).get("relation", [])
         for relation in song_relations:
             song_id = relation.get("id")
@@ -280,6 +282,7 @@ if df.empty:
     st.write("Keine Tracking-Daten gefunden.")
     st.stop()
 
+# Den Zeitstempel parsen; hier verwenden wir den Wert aus "Date created"
 df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.tz_localize(None)
 df["track_name"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("track_name", "Unbekannter Track"))
 df["artist"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("artist", "Unbekannt"))
