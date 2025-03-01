@@ -5,6 +5,8 @@ import json
 import pandas as pd
 import plotly.express as px
 
+st.set_page_config(layout="wide")
+
 # === Notion Konfiguration ===
 tracking_db_id = "1a9b6204cede80e29338ede2c76999f2"  # Tracking-Datenbank (enthält Rollups für "Artist" und "Release Date", Relation "Song")
 notion_secret = "secret_yYvZbk7zcKy0Joe3usdCHMbbZmAFHnCKrF7NvEkWY6E"
@@ -100,8 +102,6 @@ def get_spotify_data(spotify_track_id):
     return "", ""
 
 # Funktion: Hole Metadaten (Track Name, Artist, Release Date, Spotify Track ID) aus der Tracking-Datenbank
-# Dabei werden die Rollups "Artist" und "Release Date" verarbeitet, und die Relation "Song" genutzt, um
-# Track Name und Spotify Track ID von der verknüpften Seite abzurufen.
 def get_metadata_from_tracking_db():
     url = f"{notion_query_endpoint}/{tracking_db_id}/query"
     response = requests.post(url, headers=notion_headers)
@@ -151,7 +151,6 @@ df["artist"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("artist", "Un
 df["release_date"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("release_date", ""))
 df["spotify_track_id"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("spotify_track_id", ""))
 
-# Für Top 10: Verwende Messungen der letzten 2 Tage
 now = pd.Timestamp.now(tz='UTC')
 start_2days = now - pd.Timedelta(days=2)
 df_2days = df[df["date"] >= start_2days]
@@ -183,7 +182,7 @@ for idx, row in top10.iterrows():
         if row["spotify_track_id"]:
             cover_url, spotify_link = get_spotify_data(row["spotify_track_id"])
         if cover_url:
-            st.image(cover_url, use_column_width=True)
+            st.image(cover_url, use_container_width=True)
         else:
             st.write("Kein Cover")
         st.markdown(f"**{row['track_name']}**")
@@ -193,23 +192,19 @@ for idx, row in top10.iterrows():
             st.markdown(f"[Spotify Link]({spotify_link})")
         st.markdown(f"**Growth:** {row['cumulative_growth']:.1f}%")
 
-# 2. Unterhalb: Ergebnisse nur anzeigen, wenn Filter gesetzt wurden
+# 2. Unterhalb: Ergebnisse erst anzeigen, wenn Filter gesetzt wurden
 st.header("Songs filtern")
-# Sidebar-Suchfeld
 search_query = st.sidebar.text_input("Song/Artist Suche", "")
-# Weitere Filter (Popularity Range, Growth, Sortierung, Zeitraum)
-pop_range = st.sidebar.slider("Popularity Range (letzter Messwert)", 0, 100, (0, 100), step=1)
-growth_threshold = st.sidebar.number_input("Min. Growth % (zwischen den letzten beiden Messungen)", min_value=0.0, value=0.0, step=0.5)
+pop_range = st.sidebar.slider("Popularity Range (letzter Messwert)", 0, 100, (0, 100), step=1, key="filter_pop")
+growth_threshold = st.sidebar.number_input("Min. Growth % (zwischen den letzten beiden Messungen)", min_value=0.0, value=0.0, step=0.5, key="filter_growth")
 sort_option = st.sidebar.selectbox("Sortiere nach", ["Popularity", "Release Date"], key="filter_sort")
 timeframe_option = st.sidebar.selectbox("Zeitraum für Graphen (Ende)", ["3 Tage", "1 Woche", "2 Wochen", "3 Wochen"], key="filter_timeframe")
 timeframe_days = {"3 Tage": 3, "1 Woche": 7, "2 Wochen": 14, "3 Wochen": 21}
 filter_days = timeframe_days[timeframe_option]
 
-# Button zum Anwenden der Filter
 apply_filter = st.sidebar.button("Filter anwenden")
 
 if apply_filter:
-    # Berechne pro Song den letzten Messwert und Growth (wie oben)
     last_data = []
     for song_id, group in df.groupby("song_id"):
         group = group.sort_values("date")
@@ -231,20 +226,17 @@ if apply_filter:
         })
     last_df = pd.DataFrame(last_data)
     
-    # Filtere nach Popularity Range und Growth
     filtered_df = last_df[
         (last_df["last_popularity"] >= pop_range[0]) &
         (last_df["last_popularity"] <= pop_range[1]) &
         (last_df["growth"] >= growth_threshold)
     ]
-    # Suchfilter
     if search_query:
         sq = search_query.lower()
         filtered_df = filtered_df[
             filtered_df["track_name"].str.lower().str.contains(sq) |
             filtered_df["artist"].str.lower().str.contains(sq)
         ]
-    # Sortiere die Tabelle
     if sort_option == "Popularity":
         filtered_df = filtered_df.sort_values("last_popularity", ascending=False)
     elif sort_option == "Release Date":
