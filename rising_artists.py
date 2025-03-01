@@ -6,12 +6,7 @@ import pandas as pd
 import plotly.express as px
 
 # === Notion Konfiguration ===
-# Diese Datenbank (ID: 1a9b6204cede80e29338ede2c76999f2) enthält:
-# • "Song" (Relation) – Verweist auf den Song in der Songs-Datenbank
-# • "Artist" (Rollup) – Enthält den Artist-Namen
-# • "Release Date" (Rollup) – Enthält das Release Date
-# • "Popularity Score" (Number) und "Date" (Date) – Tracking-Daten
-tracking_db_id = "1a9b6204cede80e29338ede2c76999f2"
+tracking_db_id = "1a9b6204cede80e29338ede2c76999f2"  # Tracking-Datenbank
 notion_secret = "secret_yYvZbk7zcKy0Joe3usdCHMbbZmAFHnCKrF7NvEkWY6E"
 notion_query_endpoint = "https://api.notion.com/v1/databases"
 notion_page_endpoint = "https://api.notion.com/v1/pages"
@@ -21,30 +16,26 @@ notion_headers = {
     "Notion-Version": "2022-06-28"
 }
 
-# --- Helper-Funktionen ---
-
-# Um aus einer Rollup-Property den zusammengefügten Text zu extrahieren.
+# Hilfsfunktion: Extrahiere Text aus einem Rollup-Feld
 def parse_rollup_text(rollup):
     if rollup and "array" in rollup:
-        return "".join([item.get("plain_text", "") for item in rollup["array"]]).strip()
+        texts = [item.get("plain_text", "") for item in rollup["array"] if item.get("plain_text")]
+        return " ".join(texts).strip()
     return ""
 
-# Um den tatsächlichen Song/Track-Namen zu erhalten, rufen wir die Seite ab, auf die die Relation zeigt.
-# Wir gehen davon aus, dass in der verknüpften Seite die Title-Property "Track Name" heißt.
+# Hilfsfunktion: Hole den Track Name aus der verknüpften Seite (Songs-Datenbank)
 def get_track_name_from_page(page_id):
-    url = f"https://api.notion.com/v1/pages/{page_id}"
+    url = f"{notion_page_endpoint}/{page_id}"
     response = requests.get(url, headers=notion_headers)
-    response.raise_for_status()
-    page = response.json()
-    if "properties" in page and "Track Name" in page["properties"]:
-        title_prop = page["properties"]["Track Name"].get("title", [])
-        return "".join([t.get("plain_text", "") for t in title_prop]).strip()
+    if response.status_code == 200:
+        page = response.json()
+        # Wir erwarten, dass der Track Name in der Property "Track Name" als Title vorliegt
+        if "properties" in page and "Track Name" in page["properties"]:
+            title_prop = page["properties"]["Track Name"].get("title", [])
+            return "".join([t.get("plain_text", "") for t in title_prop]).strip()
     return "Unbekannter Track"
 
-# Hole die Metadaten aus der Tracking-Datenbank.
-# Für jede Seite in der DB:
-# • Aus "Song" (Relation) holen wir den verknüpften Song – wir nutzen den ersten Eintrag, um den tatsächlichen Track-Namen zu ermitteln.
-# • Aus dem Rollup "Artist" und "Release Date" extrahieren wir die Texte.
+# Funktion: Hole Metadaten (Track Name, Artist, Release Date) aus der Tracking-Datenbank
 def get_metadata_from_tracking_db():
     url = f"{notion_query_endpoint}/{tracking_db_id}/query"
     response = requests.post(url, headers=notion_headers)
@@ -52,30 +43,28 @@ def get_metadata_from_tracking_db():
     data = response.json()
     metadata = {}
     for page in data.get("results", []):
-        page_id = page.get("id")
         props = page.get("properties", {})
-        # Song (Relation): Verwende den ersten verknüpften Song, um den Track-Namen abzurufen.
+        # Hole die Song-Relation
         song_relations = props.get("Song", {}).get("relation", [])
         if song_relations:
+            # Verwende den ersten verknüpften Song, um den Track Name abzurufen
             related_page_id = song_relations[0].get("id")
-            song_name = get_track_name_from_page(related_page_id)
+            track_name = get_track_name_from_page(related_page_id)
+            key = related_page_id
         else:
-            song_name = "Unbekannter Track"
-        # Artist (Rollup)
+            track_name = "Unbekannter Track"
+            key = page.get("id")
+        # Artist: Rollup-Feld
         artist_rollup = props.get("Artist", {}).get("rollup", {})
         artist = parse_rollup_text(artist_rollup)
-        # Release Date (Rollup)
+        # Release Date: Rollup-Feld
         release_rollup = props.get("Release Date", {}).get("rollup", {})
         release_date = parse_rollup_text(release_rollup)
-        # Speichere die Metadaten unter der ID der Tracking-Seite (die für einen Song evtl. mehrfach vorhanden ist)
-        # Da die Tracking-Daten pro Song über mehrere Einträge verteilt sein können, nutzen wir die Relation-ID als Schlüssel.
-        # Hier verwenden wir den ersten Eintrag der Relation als Schlüssel.
-        key = song_relations[0].get("id") if song_relations else page_id
-        metadata[key] = {"track_name": song_name, "artist": artist, "release_date": release_date}
-    st.write("Abgerufene Metadaten aus der Tracking-DB:", metadata)
+        metadata[key] = {"track_name": track_name, "artist": artist, "release_date": release_date}
+    st.write("Abgerufene Metadaten aus der Tracking-Datenbank:", metadata)
     return metadata
 
-# Lade alle Tracking-Einträge (Messungen) aus der Tracking-Datenbank.
+# Funktion: Lade alle Tracking-Einträge (Messungen) aus der Tracking-Datenbank
 def get_tracking_entries():
     url = f"{notion_query_endpoint}/{tracking_db_id}/query"
     response = requests.post(url, headers=notion_headers)
@@ -94,7 +83,7 @@ def get_tracking_entries():
 
 # === Streamlit App ===
 
-st.title("Song Tracking Graphen")
+st.title("Song Tracking Graphen (Tracking DB)")
 
 # Sidebar: Filter & Sort Optionen
 st.sidebar.header("Filter & Sort")
@@ -116,12 +105,13 @@ if df.empty:
 
 # Konvertiere 'date' in datetime
 df["date"] = pd.to_datetime(df["date"], errors="coerce")
-# Ergänze die Metadaten (verwende als Schlüssel die Song-ID aus der Relation)
+
+# Ergänze die Metadaten anhand der Relation (Schlüssel: Song-ID aus der Relation)
 df["track_name"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("track_name", "Unbekannter Track"))
 df["artist"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("artist", "Unbekannt"))
 df["release_date"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("release_date", ""))
 
-# Berechne pro Song den letzten Messwert und den Growth zwischen den letzten beiden Messungen
+# Berechne für jeden Song den letzten Messwert und den Growth zwischen den letzten beiden Messungen
 last_data = []
 for song_id, group in df.groupby("song_id"):
     group = group.sort_values("date")
