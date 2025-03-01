@@ -149,11 +149,11 @@ def get_new_music():
     st.write("Rufe neue Musik aus Playlisten ab...")
     progress_bar = st.progress(0)
     status_text = st.empty()
-    # Beispiel: Simuliere Abruf von 5 Songs
+    # Beispielhafte Simulation: Abruf von 5 Songs
     song_list = ["Song A", "Song B", "Song C", "Song D", "Song E"]
     for i, song in enumerate(song_list):
         status_text.text(f"Rufe {song} ab...")
-        time.sleep(1)  # Simulation der Verzögerung
+        time.sleep(1)  # Simulation einer Verzögerung
         progress_bar.progress((i + 1) / len(song_list))
     st.success("Neue Musik wurde hinzugefügt!")
     st.session_state.get_new_music_week = datetime.datetime.now().isocalendar()[1]
@@ -166,7 +166,7 @@ def update_popularity():
     update_steps = 5  # Beispiel: 5 Schritte
     for i in range(update_steps):
         status_text.text(f"Update Popularity: Schritt {i+1} von {update_steps}")
-        time.sleep(1)  # Simulation der Verzögerung
+        time.sleep(1)  # Simulation einer Verzögerung
         progress_bar.progress((i + 1) / update_steps)
     st.success("Popularity wurde aktualisiert!")
     now = datetime.datetime.now()
@@ -218,7 +218,7 @@ if df.empty:
     st.write("Keine Tracking-Daten gefunden.")
     st.stop()
 
-# Konvertiere das Datum explizit mit deinem Format (yyyy.mm.dd. hh:mm) als tz-naiv
+# Konvertiere das Datum mit deinem Format (yyyy.mm.dd. hh:mm) als tz-naiv
 df["date"] = pd.to_datetime(df["date"], format="%Y.%m.%d. %H:%M", errors="coerce")
 now = pd.Timestamp.now()  # tz-naiv
 start_2days = now - pd.Timedelta(days=2)
@@ -244,7 +244,11 @@ for song_id, group in df_2days.groupby("song_id"):
     })
 
 cum_df = pd.DataFrame(cumulative)
-top10 = cum_df.sort_values("cumulative_growth", ascending=False).head(10)
+if cum_df.empty:
+    st.write("Keine Top 10-Daten verfügbar.")
+    top10 = pd.DataFrame()
+else:
+    top10 = cum_df.sort_values("cumulative_growth", ascending=False).head(10)
 
 # Erzeuge ein Grid via st.columns (5 Spalten) für die Top 10
 num_columns = 5
