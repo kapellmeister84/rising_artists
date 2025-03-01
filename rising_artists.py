@@ -6,7 +6,7 @@ import pandas as pd
 import plotly.express as px
 
 # === Notion Konfiguration ===
-tracking_db_id = "1a9b6204cede80e29338ede2c76999f2"  # Tracking-Datenbank
+tracking_db_id = "1a9b6204cede80e29338ede2c76999f2"  # Tracking-Datenbank, die Rollups für "Artist" und "Release Date" enthält
 notion_secret = "secret_yYvZbk7zcKy0Joe3usdCHMbbZmAFHnCKrF7NvEkWY6E"
 notion_query_endpoint = "https://api.notion.com/v1/databases"
 notion_page_endpoint = "https://api.notion.com/v1/pages"
@@ -18,53 +18,17 @@ notion_headers = {
 
 # Hilfsfunktion: Extrahiere Text aus einem Rollup-Feld
 def parse_rollup_text(rollup):
-    if rollup and "array" in rollup:
+    # Debug: Ausgabe des Rollup-Inhalts
+    st.write("Rollup Debug:", rollup)
+    if rollup is None:
+        return ""
+    # Bei Rollups vom Typ "array"
+    if "array" in rollup:
         texts = [item.get("plain_text", "") for item in rollup["array"] if item.get("plain_text")]
         return " ".join(texts).strip()
     return ""
 
-# Hilfsfunktion: Hole den Track Name aus der verknüpften Seite (Songs-Datenbank)
-def get_track_name_from_page(page_id):
-    url = f"{notion_page_endpoint}/{page_id}"
-    response = requests.get(url, headers=notion_headers)
-    if response.status_code == 200:
-        page = response.json()
-        # Wir erwarten, dass der Track Name in der Property "Track Name" als Title vorliegt
-        if "properties" in page and "Track Name" in page["properties"]:
-            title_prop = page["properties"]["Track Name"].get("title", [])
-            return "".join([t.get("plain_text", "") for t in title_prop]).strip()
-    return "Unbekannter Track"
-
-# Funktion: Hole Metadaten (Track Name, Artist, Release Date) aus der Tracking-Datenbank
-def get_metadata_from_tracking_db():
-    url = f"{notion_query_endpoint}/{tracking_db_id}/query"
-    response = requests.post(url, headers=notion_headers)
-    response.raise_for_status()
-    data = response.json()
-    metadata = {}
-    for page in data.get("results", []):
-        props = page.get("properties", {})
-        # Hole die Song-Relation
-        song_relations = props.get("Song", {}).get("relation", [])
-        if song_relations:
-            # Verwende den ersten verknüpften Song, um den Track Name abzurufen
-            related_page_id = song_relations[0].get("id")
-            track_name = get_track_name_from_page(related_page_id)
-            key = related_page_id
-        else:
-            track_name = "Unbekannter Track"
-            key = page.get("id")
-        # Artist: Rollup-Feld
-        artist_rollup = props.get("Artist", {}).get("rollup", {})
-        artist = parse_rollup_text(artist_rollup)
-        # Release Date: Rollup-Feld
-        release_rollup = props.get("Release Date", {}).get("rollup", {})
-        release_date = parse_rollup_text(release_rollup)
-        metadata[key] = {"track_name": track_name, "artist": artist, "release_date": release_date}
-    st.write("Abgerufene Metadaten aus der Tracking-Datenbank:", metadata)
-    return metadata
-
-# Funktion: Lade alle Tracking-Einträge (Messungen) aus der Tracking-Datenbank
+# Funktion: Lade alle Tracking-Einträge aus der Tracking-Datenbank
 def get_tracking_entries():
     url = f"{notion_query_endpoint}/{tracking_db_id}/query"
     response = requests.post(url, headers=notion_headers)
@@ -78,8 +42,48 @@ def get_tracking_entries():
         song_relations = props.get("Song", {}).get("relation", [])
         for relation in song_relations:
             song_id = relation.get("id")
-            entries.append({"song_id": song_id, "date": date_str, "popularity": pop})
+            entries.append({"song_id": song_id, "date": date_str, "popularity": pop, "raw_props": props})
     return entries
+
+# Funktion: Hole Metadaten (Track Name, Artist, Release Date) aus der Tracking-Datenbank
+def get_metadata_from_tracking_db():
+    url = f"{notion_query_endpoint}/{tracking_db_id}/query"
+    response = requests.post(url, headers=notion_headers)
+    response.raise_for_status()
+    data = response.json()
+    metadata = {}
+    for page in data.get("results", []):
+        props = page.get("properties", {})
+        # Song (Relation): Verwende den ersten Eintrag, um den Track Name abzurufen
+        song_relations = props.get("Song", {}).get("relation", [])
+        if song_relations:
+            # Wir rufen den Track Name direkt aus der verknüpften Seite ab
+            related_page_id = song_relations[0].get("id")
+            track_name = get_track_name_from_page(related_page_id)
+            key = related_page_id
+        else:
+            track_name = "Unbekannter Track"
+            key = page.get("id")
+        # Artist: Rollup-Feld
+        artist_rollup = props.get("Artist", {}).get("rollup", {})
+        artist = parse_rollup_text(artist_rollup)
+        # Release Date: Rollup-Feld
+        release_rollup = props.get("Release Date", {}).get("rollup", {})
+        release_date = parse_rollup_text(release_rollup)
+        metadata[key] = {"track_name": track_name, "artist": artist, "release_date": release_date}
+    st.write("Abgerufene Metadaten:", metadata)
+    return metadata
+
+# Funktion: Hole den Track Name von der verknüpften Seite (Songs-Datenbank)
+def get_track_name_from_page(page_id):
+    url = f"{notion_page_endpoint}/{page_id}"
+    response = requests.get(url, headers=notion_headers)
+    if response.status_code == 200:
+        page = response.json()
+        if "properties" in page and "Track Name" in page["properties"]:
+            title_prop = page["properties"]["Track Name"].get("title", [])
+            return "".join([t.get("plain_text", "") for t in title_prop]).strip()
+    return "Unbekannter Track"
 
 # === Streamlit App ===
 
@@ -105,8 +109,7 @@ if df.empty:
 
 # Konvertiere 'date' in datetime
 df["date"] = pd.to_datetime(df["date"], errors="coerce")
-
-# Ergänze die Metadaten anhand der Relation (Schlüssel: Song-ID aus der Relation)
+# Ergänze die Metadaten anhand der Song-Relation (Schlüssel: Song-ID)
 df["track_name"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("track_name", "Unbekannter Track"))
 df["artist"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("artist", "Unbekannt"))
 df["release_date"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("release_date", ""))
@@ -132,7 +135,7 @@ for song_id, group in df.groupby("song_id"):
     })
 last_df = pd.DataFrame(last_data)
 
-# Filtere Tabelle nach Popularity Range und Growth
+# Filtere nach Popularity Range und Growth
 filtered_df = last_df[
     (last_df["last_popularity"] >= pop_range[0]) &
     (last_df["last_popularity"] <= pop_range[1]) &
