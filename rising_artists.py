@@ -8,6 +8,39 @@ from concurrent.futures import ThreadPoolExecutor
 
 st.set_page_config(layout="wide")
 
+# === Custom CSS für das Grid (im Hauptbereich einbinden) ===
+custom_css = """
+<style>
+.song-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 1rem;
+}
+.song-card {
+  text-align: center;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  padding: 0.5rem;
+  height: 320px;
+  box-sizing: border-box;
+}
+.song-card img {
+  width: 100%;
+  height: auto;
+  max-height: 200px;
+  object-fit: cover;
+}
+.song-info {
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+</style>
+"""
+st.markdown(custom_css, unsafe_allow_html=True)
+
 # === Notion-Konfiguration ===
 tracking_db_id = "1a9b6204cede80e29338ede2c76999f2"  # Tracking-Datenbank (enthält Rollups für "Artist" und "Release Date", Relation "Song")
 notion_secret = "secret_yYvZbk7zcKy0Joe3usdCHMbbZmAFHnCKrF7NvEkWY6E"
@@ -146,13 +179,31 @@ def get_metadata_from_tracking_db():
 # --- Platzhalterfunktionen für Buttons ---
 def get_new_music():
     st.write("Rufe neue Musik aus Playlisten ab...")
-    # Hier deinen Code einfügen...
-    st.success("Neue Musik hinzugefügt!")
+    # Hier eigenen Code einfügen...
+    st.success("Neue Musik wurde hinzugefügt!")
 
 def update_popularity():
     st.write("Füge neue Popularity-Messung hinzu...")
-    # Hier deinen Code einfügen...
+    # Hier eigenen Code einfügen...
     st.success("Popularity wurde aktualisiert!")
+
+# --- Sidebar: Filterformular und Buttons ---
+with st.sidebar:
+    with st.form("filter_form"):
+        search_query = st.text_input("Song/Artist Suche", "")
+        filter_pop_range = st.slider("Popularity Range (letzter Messwert)", 0, 100, (0, 100), step=1, key="filter_pop")
+        filter_growth_threshold = st.number_input("Min. Growth % (zwischen den letzten beiden Messungen)", min_value=0.0, value=0.0, step=0.5, key="filter_growth")
+        filter_sort_option = st.selectbox("Sortiere nach", ["Popularity", "Release Date"], key="filter_sort")
+        filter_timeframe_option = st.selectbox("Zeitraum für Graphen (Ende)", ["3 Tage", "1 Woche", "2 Wochen", "3 Wochen"], key="filter_timeframe")
+        filter_timeframe_days = {"3 Tage": 3, "1 Woche": 7, "2 Wochen": 14, "3 Wochen": 21}
+        filter_days = filter_timeframe_days[filter_timeframe_option]
+        submitted = st.form_submit_button("Filter anwenden")
+    
+    st.markdown("---")
+    if st.button("Get New Music"):
+        get_new_music()
+    if st.button("Update Popularity"):
+        update_popularity()
 
 st.title("Song Tracking Übersicht")
 
@@ -199,49 +250,16 @@ for song_id, group in df_2days.groupby("song_id"):
 cum_df = pd.DataFrame(cumulative)
 top10 = cum_df.sort_values("cumulative_growth", ascending=False).head(10)
 
-# Feste 5-Spalten-Galerie via HTML
-css_code = """
-<style>
-.song-grid {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 1rem;
-}
-.song-card {
-  text-align: center;
-  border: 1px solid #ddd;
-  border-radius: 5px;
-  padding: 0.5rem;
-  height: 320px;
-  box-sizing: border-box;
-}
-.song-card img {
-  width: 100%;
-  height: auto;
-  max-height: 200px;
-  object-fit: cover;
-}
-.song-info {
-  margin-top: 0.5rem;
-  font-size: 0.9rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-</style>
-"""
-st.markdown(css_code, unsafe_allow_html=True)
-
+# Erzeuge ein Grid (5 Spalten) via HTML für die Top 10
 cards_html = ["<div class='song-grid'>"]
 for _, row in top10.iterrows():
-    cover_url, spotify_link = ("", "")
+    cover_url, spotify_link = "", ""
     if row["spotify_track_id"]:
         cover_url, spotify_link = get_spotify_data(row["spotify_track_id"])
-
-    # Kürze Titel und Artist
+    
     short_title = row["track_name"][:40] + "..." if len(row["track_name"]) > 40 else row["track_name"]
     short_artist = row["artist"][:40] + "..." if len(row["artist"]) > 40 else row["artist"]
-
+    
     card_html = f"""
     <div class="song-card">
       <img src="{cover_url}" alt="Cover">
@@ -251,10 +269,7 @@ for _, row in top10.iterrows():
         Release: {row['release_date']}<br>
         Popularity: {row['last_popularity']:.1f}<br>
         Growth: {row['cumulative_growth']:.1f}%<br>
-    """
-    if spotify_link:
-        card_html += f'<a href="{spotify_link}" target="_blank">Spotify Link</a>'
-    card_html += """
+        {'<a href="'+spotify_link+'" target="_blank">Spotify Link</a>' if spotify_link else ''}
       </div>
     </div>
     """
@@ -264,23 +279,6 @@ st.markdown("".join(cards_html), unsafe_allow_html=True)
 
 # 2. Unterhalb: Ergebnisse erst anzeigen, wenn Filter gesetzt wurden
 st.header("Songs filtern")
-
-with st.sidebar.form("filter_form"):
-    search_query = st.text_input("Song/Artist Suche", "")
-    filter_pop_range = st.slider("Popularity Range (letzter Messwert)", 0, 100, (0, 100), step=1, key="filter_pop")
-    filter_growth_threshold = st.number_input("Min. Growth % (zwischen den letzten beiden Messungen)", min_value=0.0, value=0.0, step=0.5, key="filter_growth")
-    filter_sort_option = st.selectbox("Sortiere nach", ["Popularity", "Release Date"], key="filter_sort")
-    filter_timeframe_option = st.selectbox("Zeitraum für Graphen (Ende)", ["3 Tage", "1 Woche", "2 Wochen", "3 Wochen"], key="filter_timeframe")
-    filter_timeframe_days = {"3 Tage": 3, "1 Woche": 7, "2 Wochen": 14, "3 Wochen": 21}
-    filter_days = filter_timeframe_days[filter_timeframe_option]
-    submitted = st.form_submit_button("Filter anwenden")
-
-# Die Buttons kommen ganz unten in die Sidebar
-st.sidebar.markdown("---")
-if st.sidebar.button("Get New Music"):
-    get_new_music()
-if st.sidebar.button("Update Popularity"):
-    update_popularity()
 
 if submitted:
     last_data = []
@@ -323,7 +321,7 @@ if submitted:
     
     st.write("Gefilterte Songs:")
     for idx, row in filtered_df.iterrows():
-        cover_url, spotify_link = ("", "")
+        cover_url, spotify_link = "", ""
         if row["spotify_track_id"]:
             cover_url, spotify_link = get_spotify_data(row["spotify_track_id"])
         with st.container():
