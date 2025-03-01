@@ -90,7 +90,8 @@ def get_all_tracking_pages():
 
 @st.cache_data(show_spinner=False)
 def get_tracking_entries():
-    """Extrahiert aus allen Seiten der Tracking-Datenbank (cached):
+    """
+    Extrahiert aus allen Seiten der Tracking-Datenbank (cached):
       - Popularity Score,
       - Zeitstempel aus dem Property "Date",
       - die Song-ID aus der Relation "Song".
@@ -274,12 +275,11 @@ def update_popularity():
     st.success("Popularity wurde aktualisiert!")
     status_text.empty()
     
-    # Growth-Berechnung: Für jeden Song werden die beiden neuesten Messwerte verglichen und der Growth-Wert
-    # wird in die neueste Messung geschrieben.
+    # Growth-Berechnung: Vergleiche die beiden neuesten Messwerte jedes Songs und update den Growth-Wert
     st.write("Berechne Growth für jeden Song...")
-    # Cache leeren, um die aktuellsten Daten zu erhalten
-    st.cache_data.clear(get_all_tracking_pages)
-    st.cache_data.clear(get_tracking_entries)
+    # Cache leeren, um die aktuellsten Daten zu erhalten:
+    get_all_tracking_pages.clear()
+    get_tracking_entries.clear()
     updated_entries = get_tracking_entries()
     df_update = pd.DataFrame(updated_entries)
     df_update["date"] = pd.to_datetime(df_update["date"], errors="coerce")
@@ -369,7 +369,6 @@ for row_df in rows:
             cover_url, spotify_link = get_spotify_data(row["spotify_track_id"])
         with cols[idx]:
             st.markdown(f"{row['track_name']}", unsafe_allow_html=True)
-            # Cover als klickbarer Link zu Spotify
             if cover_url and spotify_link:
                 st.markdown(f'<a href="{spotify_link}" target="_blank"><img src="{cover_url}" style="width:100%;" /></a>', unsafe_allow_html=True)
             elif cover_url:
