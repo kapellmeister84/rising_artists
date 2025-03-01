@@ -5,13 +5,17 @@ import json
 import time
 import pandas as pd
 import plotly.express as px
+import random
 from concurrent.futures import ThreadPoolExecutor
 import re
 
 st.set_page_config(layout="wide")
 
 # === Notion-Konfiguration ===
-weeks_db_id = "1a9b6204cede80e29338ede2c76999f2"  # Weeks-Datenbank (enthält "Date", "Popularity Score", "Track Code" und Relation "Song")
+# Weeks-Datenbank (Messungen)
+weeks_db_id = "1a9b6204cede80e29338ede2c76999f2"  
+# Song-Datenbank (enthält die tatsächlichen Song-Seiten)
+song_db_id = "b94c8042619d42a3be799c9795984150"  
 notion_secret = "secret_yYvZbk7zcKy0Joe3usdCHMbbZmAFHnCKrF7NvEkWY6E"
 notion_page_endpoint = "https://api.notion.com/v1/pages"
 notion_query_endpoint = "https://api.notion.com/v1/databases"
@@ -144,6 +148,17 @@ def get_metadata_from_tracking_db():
         }
     return metadata
 
+# Neue Funktion: Hole alle Song-Page-IDs aus der Song-Datenbank
+def get_all_song_page_ids():
+    url = f"{notion_query_endpoint}/{song_db_id}/query"
+    response = requests.post(url, headers=notion_headers)
+    response.raise_for_status()
+    data = response.json()
+    song_ids = []
+    for page in data.get("results", []):
+        song_ids.append(page["id"])
+    return song_ids
+
 # Neue Funktion: Erstelle einen neuen Messungseintrag in der Weeks-Datenbank
 def create_new_measurement(song_id, popularity, code):
     """
@@ -174,31 +189,18 @@ def create_new_measurement(song_id, popularity, code):
     else:
         st.error(f"Fehler beim Erstellen eines Eintrags: {response.text}")
 
-# Update Popularity: Legt für jeden Song einen neuen Messwert mit einem Code an – pro Artist ein eindeutiger Code
+# Update Popularity: Legt für jeden Song (aus der Song-Datenbank) einen neuen Messwert mit einem Code an
 def update_popularity():
     st.write("Füge neue Popularity-Messung hinzu...")
-    # Zunächst holen wir die Metadaten, um den Artist zu ermitteln
-    metadata = get_metadata_from_tracking_db()
-    # Wir speichern pro Artist den generierten Code in einem Dictionary
-    codes = {}
-    run_time = datetime.datetime.now().strftime("%Y%m%d-%H%M")
-    # Beispiel-Dummy-Songs mit gültigen UUIDs
-    example_songs = [
-        {"song_id": "123e4567-e89b-12d3-a456-426614174000", "pop": 15},
-        {"song_id": "123e4567-e89b-12d3-a456-426614174001", "pop": 20}
-    ]
-    for s in example_songs:
-        # Ermittle den Artist des Songs
-        artist = metadata.get(s["song_id"], {}).get("artist", "Unknown")
-        # Ersetze Leerzeichen und Sonderzeichen im Artistnamen, damit der Code sauber ist
-        sanitized_artist = re.sub(r'\W+', '', artist)
-        # Falls für diesen Artist noch kein Code generiert wurde, generiere einen neuen
-        if sanitized_artist not in codes:
-            codes[sanitized_artist] = "TrackCode-" + sanitized_artist + "-" + run_time
-        code = codes[sanitized_artist]
-        create_new_measurement(song_id=s["song_id"], popularity=s["pop"], code=code)
+    run_code = "TrackCode-" + datetime.datetime.now().strftime("%Y%m%d-%H%M")
+    # Hole alle Song-Page-IDs automatisch
+    song_ids = get_all_song_page_ids()
+    # Hier verwenden wir Dummy-Werte (z. B. zufällig generiert)
+    for song_id in song_ids:
+        popularity = random.randint(5, 50)
+        create_new_measurement(song_id=song_id, popularity=popularity, code=run_code)
         time.sleep(0.3)
-    st.success("Popularity wurde aktualisiert. Neue Einträge wurden mit den folgenden Codes erstellt: " + ", ".join(codes.values()))
+    st.success("Popularity wurde aktualisiert. Neue Einträge mit Code '" + run_code + "' wurden angelegt!")
 
 @st.cache_data(show_spinner=False)
 def get_weeks_entries():
@@ -278,7 +280,7 @@ with st.sidebar:
 
 st.title("Song Tracking Übersicht")
 
-# 1. Oben: Top 10 Songs – Hier wird für jeden Song das kumulative Wachstum über alle Messungen berechnet
+# 1. Oben: Top 10 Songs – kumulatives Wachstum über alle Messungen
 st.header("Top 10 Songs – Wachstum über alle Messungen")
 
 tracking_entries = get_tracking_entries()
