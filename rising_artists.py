@@ -26,13 +26,13 @@ def get_week_entries():
     data = response.json()
     entries = []
     for page in data.get("results", []):
-        props = page["properties"]
+        props = page.get("properties", {})
         pop = props.get("Popularity Score", {}).get("number")
         date_str = props.get("Date", {}).get("date", {}).get("start")
         # Hole die Song-Relation (Liste von Objekten mit "id")
         song_relations = props.get("Song", {}).get("relation", [])
         for relation in song_relations:
-            song_id = relation["id"]
+            song_id = relation.get("id")
             entries.append({"song_id": song_id, "date": date_str, "popularity": pop})
     return entries
 
@@ -44,19 +44,26 @@ def get_song_metadata():
     data = response.json()
     metadata = {}
     for page in data.get("results", []):
-        page_id = page["id"]
-        props = page["properties"]
+        page_id = page.get("id")
+        props = page.get("properties", {})
         # Song Title: Alle Textfragmente zusammenfügen
-        title_prop = props.get("Song Title", {}).get("title", [])
-        song_title = "".join([t.get("plain_text", "") for t in title_prop]).strip() if title_prop else "Unbekannter Song"
+        if "Song Title" in props and "title" in props["Song Title"]:
+            song_title = "".join([t.get("plain_text", "") for t in props["Song Title"]["title"]]).strip()
+        else:
+            song_title = "Unbekannter Song"
         # Artist Name: Alle Textfragmente zusammenfügen
-        artist_prop = props.get("Artist Name", {}).get("rich_text", [])
-        artist = "".join([t.get("plain_text", "") for t in artist_prop]).strip() if artist_prop else "Unbekannt"
+        if "Artist Name" in props and "rich_text" in props["Artist Name"]:
+            artist = "".join([t.get("plain_text", "") for t in props["Artist Name"]["rich_text"]]).strip()
+        else:
+            artist = "Unbekannt"
         # Release Date
-        release_date = ""
         if "Release Date" in props and props["Release Date"].get("date"):
             release_date = props["Release Date"]["date"].get("start", "")
+        else:
+            release_date = ""
         metadata[page_id] = {"song_title": song_title, "artist": artist, "release_date": release_date}
+    # Debug: Zeige die abgerufenen Metadaten
+    st.write("Abgerufene Song-Metadaten:", metadata)
     return metadata
 
 # === Streamlit App ===
@@ -85,7 +92,7 @@ if df.empty:
 # Konvertiere das Datum in datetime (mit Fehlerbehandlung)
 df["date"] = pd.to_datetime(df["date"], errors="coerce")
 # Füge Song-Metadaten hinzu (tatsächliche Namen aus der Songs-Datenbank)
-df["song_title"] = df["song_id"].map(lambda x: song_metadata.get(x, {}).get("song_title", ""))
+df["song_title"] = df["song_id"].map(lambda x: song_metadata.get(x, {}).get("song_title", "Unbekannter Song"))
 df["artist"] = df["song_id"].map(lambda x: song_metadata.get(x, {}).get("artist", "Unbekannt"))
 df["release_date"] = df["song_id"].map(lambda x: song_metadata.get(x, {}).get("release_date", ""))
 
