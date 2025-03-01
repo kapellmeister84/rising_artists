@@ -253,10 +253,10 @@ st.title("Notion Spotify Sync Scheduler")
 st.write("Diese App startet jeden Freitag um 00:01 den 'Sync Songs with Spotify'-Task und täglich um 00:01 sowie 17:00 den 'Create Week Entries'-Task automatisch im Hintergrund.")
 st.write("Du kannst die Tasks auch manuell über die Buttons unten starten:")
 
-if st.button("Sync Songs jetzt starten"):
+if st.button("New Music Friday Sync"):
     sync_songs_with_spotify_task()
 
-if st.button("Week Entries jetzt starten"):
+if st.button("Track Analytics"):
     create_week_entries_task()
 
 st.write("Scheduler läuft. Warte auf die nächste geplante Ausführung...")
