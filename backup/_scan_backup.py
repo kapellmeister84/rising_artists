@@ -2,7 +2,6 @@ import streamlit as st
 import requests
 import datetime
 import json
-import time
 import pandas as pd
 import plotly.express as px
 from concurrent.futures import ThreadPoolExecutor
@@ -72,7 +71,7 @@ def update_growth_for_measurement(entry_id, growth):
     response.raise_for_status()
 
 def get_tracking_entries():
-    """Holt Einträge aus der Tracking-Datenbank."""
+    """Popularity muss aktuell sein, daher kein Caching."""
     url = f"{notion_query_endpoint}/{tracking_db_id}/query"
     response = requests.post(url, headers=notion_headers)
     response.raise_for_status()
@@ -82,7 +81,6 @@ def get_tracking_entries():
         entry_id = page.get("id")
         props = page.get("properties", {})
         pop = props.get("Popularity Score", {}).get("number")
-        # Hier wird das Property "Date" ausgelesen (z. B. "2025/03/01 19:18" oder als ISO-String)
         date_str = props.get("Date", {}).get("date", {}).get("start")
         song_relations = props.get("Song", {}).get("relation", [])
         for relation in song_relations:
@@ -106,7 +104,7 @@ def get_spotify_data(spotify_track_id):
 
 @st.cache_data(show_spinner=False)
 def get_metadata_from_tracking_db():
-    """Liest Artist, Release Date, Track ID etc. aus der DB."""
+    """Artist, Release Date, Track ID etc. (gecacht)."""
     url = f"{notion_query_endpoint}/{tracking_db_id}/query"
     response = requests.post(url, headers=notion_headers)
     response.raise_for_status()
@@ -145,35 +143,16 @@ def get_metadata_from_tracking_db():
         }
     return metadata
 
-# --- Platzhalterfunktionen für Buttons mit Fortschrittsbalken ---
+# --- Platzhalterfunktionen für Buttons ---
 def get_new_music():
     st.write("Rufe neue Musik aus Playlisten ab...")
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    # Simulation: Abruf von 5 Songs
-    song_list = ["Song A", "Song B", "Song C", "Song D", "Song E"]
-    for i, song in enumerate(song_list):
-        status_text.text(f"Rufe {song} ab...")
-        time.sleep(1)  # Simulation einer Verzögerung
-        progress_bar.progress((i + 1) / len(song_list))
+    # Hier deinen Code einfügen...
     st.success("Neue Musik wurde hinzugefügt!")
-    st.session_state.get_new_music_week = datetime.datetime.now().isocalendar()[1]
-    status_text.empty()
 
 def update_popularity():
     st.write("Füge neue Popularity-Messung hinzu...")
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    update_steps = 5  # Beispiel: 5 Schritte
-    for i in range(update_steps):
-        status_text.text(f"Update Popularity: Schritt {i+1} von {update_steps}")
-        time.sleep(1)  # Simulation einer Verzögerung
-        progress_bar.progress((i + 1) / update_steps)
+    # Hier deinen Code einfügen...
     st.success("Popularity wurde aktualisiert!")
-    now = datetime.datetime.now()
-    slot = f"{now.date()}_{'00' if now.hour < 17 else '17'}"
-    st.session_state.updated_popularity_slots.add(slot)
-    status_text.empty()
 
 # --- Sidebar: Buttons und Filterformular ---
 with st.sidebar:
@@ -195,8 +174,8 @@ with st.sidebar:
 
 st.title("Song Tracking Übersicht")
 
-# 1. Oben: Top 10 Songs mit größtem kumulativem Wachstum
-st.header("Top 10 Songs – Wachstum über alle Messungen")
+# 1. Oben: Top 10 Songs mit größtem kumulativem Wachstum über 2 Tage
+st.header("Top 10 Songs – Wachstum über 2 Tage")
 
 tracking_entries = get_tracking_entries()
 metadata = get_metadata_from_tracking_db()
@@ -206,18 +185,18 @@ if df.empty:
     st.write("Keine Tracking-Daten gefunden.")
     st.stop()
 
-# Datum parsen – hier ohne explizites Format, damit automatisch erkannt wird
-df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.tz_localize(None)
+df["date"] = pd.to_datetime(df["date"], errors="coerce")
 df["track_name"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("track_name", "Unbekannter Track"))
 df["artist"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("artist", "Unbekannt"))
 df["release_date"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("release_date", ""))
 df["spotify_track_id"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("spotify_track_id", ""))
 
-# Verwende alle Messungen (nicht nur 2 Tage zurück)
-df_all = df[df["date"].notnull()]
+now = pd.Timestamp.now(tz='UTC')
+start_2days = now - pd.Timedelta(days=2)
+df_2days = df[df["date"] >= start_2days]
 
 cumulative = []
-for song_id, group in df_all.groupby("song_id"):
+for song_id, group in df_2days.groupby("song_id"):
     group = group.sort_values("date")
     if group.empty:
         continue
@@ -236,11 +215,7 @@ for song_id, group in df_all.groupby("song_id"):
     })
 
 cum_df = pd.DataFrame(cumulative)
-if cum_df.empty:
-    st.write("Keine Daten für die Top 10 verfügbar.")
-    top10 = pd.DataFrame()
-else:
-    top10 = cum_df.sort_values("cumulative_growth", ascending=False).head(10)
+top10 = cum_df.sort_values("cumulative_growth", ascending=False).head(10)
 
 # Erzeuge ein Grid via st.columns (5 Spalten) für die Top 10
 num_columns = 5
@@ -248,7 +223,7 @@ rows = [top10.iloc[i:i+num_columns] for i in range(0, len(top10), num_columns)]
 for row_df in rows:
     cols = st.columns(num_columns)
     for idx, (_, row) in enumerate(row_df.iterrows()):
-        cover_url, spotify_link = ("", "")
+        cover_url, spotify_link = "", ""
         if row["spotify_track_id"]:
             cover_url, spotify_link = get_spotify_data(row["spotify_track_id"])
         with cols[idx]:
@@ -266,26 +241,26 @@ for row_df in rows:
                 st.markdown(f"<div style='text-align: center;'><a href='{spotify_link}' target='_blank'>Spotify Link</a></div>", unsafe_allow_html=True)
             st.markdown(f"<div style='text-align: center; font-weight: bold;'>Growth: {row['cumulative_growth']:.1f}%</div>", unsafe_allow_html=True)
 
-# 2. Unterhalb: Filterergebnisse
+# 2. Unterhalb: Ergebnisse erst anzeigen, wenn Filter gesetzt wurden
 st.header("Songs filtern")
 
 if submitted:
     last_data = []
-    for song_id, group in df_all.groupby("song_id"):
+    for song_id, group in df.groupby("song_id"):
         group = group.sort_values("date")
         last_pop = group.iloc[-1]["popularity"]
         growth_val = 0.0
         if len(group) >= 2:
             prev_pop = group.iloc[-2]["popularity"]
-            if prev_pop and prev_pop != 0:
+            if prev_pop != 0:
                 growth_val = ((last_pop - prev_pop) / prev_pop) * 100
         meta = metadata.get(song_id, {"track_name": "Unbekannter Track", "artist": "Unbekannt", "release_date": "", "spotify_track_id": ""})
         last_data.append({
             "song_id": song_id,
-            "track_name": meta.get("track_name", "Unbekannter Track"),
-            "artist": meta.get("artist", "Unbekannt"),
-            "release_date": meta.get("release_date", ""),
-            "spotify_track_id": meta.get("spotify_track_id", ""),
+            "track_name": meta["track_name"],
+            "artist": meta["artist"],
+            "release_date": meta["release_date"],
+            "spotify_track_id": meta["spotify_track_id"],
             "last_popularity": last_pop,
             "growth": growth_val
         })
@@ -310,7 +285,7 @@ if submitted:
     
     st.write("Gefilterte Songs:")
     for idx, row in filtered_df.iterrows():
-        cover_url, spotify_link = ("", "")
+        cover_url, spotify_link = "", ""
         if row["spotify_track_id"]:
             cover_url, spotify_link = get_spotify_data(row["spotify_track_id"])
         with st.container():
@@ -322,7 +297,7 @@ Popularity: {row['last_popularity']:.1f} | Growth: {row['growth']:.1f}%""")
             if spotify_link:
                 st.markdown(f"[Spotify Link]({spotify_link})")
             with st.expander(f"{row['track_name']} - {row['artist']} anzeigen"):
-                song_history = df_all[df_all["song_id"] == row["song_id"]].sort_values("date")
+                song_history = df[df["song_id"] == row["song_id"]].sort_values("date")
                 if len(song_history) == 1:
                     fig = px.scatter(song_history, x="date", y="popularity",
                                      title=f"{row['track_name']} - {row['artist']}",
