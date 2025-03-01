@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 st.set_page_config(layout="wide")
 
 # === Notion Konfiguration ===
-tracking_db_id = "1a9b6204cede80e29338ede2c76999f2"  # Tracking-Datenbank
+tracking_db_id = "1a9b6204cede80e29338ede2c76999f2"  # Tracking-Datenbank (enthält Rollups für "Artist" und "Release Date", Relation "Song")
 notion_secret = "secret_yYvZbk7zcKy0Joe3usdCHMbbZmAFHnCKrF7NvEkWY6E"
 notion_query_endpoint = "https://api.notion.com/v1/databases"
 notion_page_endpoint = "https://api.notion.com/v1/pages"
@@ -74,8 +74,7 @@ def update_growth_for_measurement(entry_id, growth):
     response = requests.patch(url, headers=notion_headers, data=json.dumps(data))
     response.raise_for_status()
 
-# Funktion: Hole alle Tracking-Einträge aus der Tracking-Datenbank
-@st.cache_data(show_spinner=False)
+# Funktion: Hole alle Tracking-Einträge (Messungen) aus der Tracking-Datenbank (ohne Caching – Popularity muss aktuell bleiben)
 def get_tracking_entries():
     url = f"{notion_query_endpoint}/{tracking_db_id}/query"
     response = requests.post(url, headers=notion_headers)
@@ -115,24 +114,22 @@ def get_metadata_from_tracking_db():
     response.raise_for_status()
     data = response.json()
     metadata = {}
-    # Parallelisiere das Abrufen der Track Names und Track IDs
     with ThreadPoolExecutor() as executor:
-        future_track_names = {executor.submit(get_track_name_from_page, song_rel["id"]): song_rel["id"]
-                              for page in data.get("results", [])
-                              for song_rel in page.get("properties", {}).get("Song", {}).get("relation", [])}
-        future_track_ids = {executor.submit(get_track_id_from_page, song_rel["id"]): song_rel["id"]
-                            for page in data.get("results", [])
-                            for song_rel in page.get("properties", {}).get("Song", {}).get("relation", [])}
-        track_names = {future.result(): key for future, key in future_track_names.items()}
-        track_ids = {future.result(): key for future, key in future_track_ids.items()}
-
+        futures = {}
+        for page in data.get("results", []):
+            props = page.get("properties", {})
+            song_relations = props.get("Song", {}).get("relation", [])
+            if song_relations:
+                related_page_id = song_relations[0].get("id")
+                futures[related_page_id] = executor.submit(get_track_name_from_page, related_page_id)
+        track_names = {key: future.result() for key, future in futures.items()}
     for page in data.get("results", []):
         props = page.get("properties", {})
         song_relations = props.get("Song", {}).get("relation", [])
         if song_relations:
             related_page_id = song_relations[0].get("id")
-            track_name = get_track_name_from_page(related_page_id)  # alternativ: track_names.get(related_page_id, "Unbekannter Track")
-            spotify_track_id = get_track_id_from_page(related_page_id)  # alternativ: track_ids.get(related_page_id, "")
+            track_name = track_names.get(related_page_id, "Unbekannter Track")
+            spotify_track_id = get_track_id_from_page(related_page_id)
             key = related_page_id
         else:
             track_name = "Unbekannter Track"
@@ -154,7 +151,7 @@ def get_metadata_from_tracking_db():
 
 st.title("Song Tracking Übersicht")
 
-# 1. Oben: Top 10 Songs mit größtem Wachstum über 2 Tage (Gallery)
+# 1. Oben: Top 10 Songs mit größtem kumulativem Wachstum über 2 Tage (Gallery)
 st.header("Top 10 Songs – Wachstum über 2 Tage")
 tracking_entries = get_tracking_entries()
 metadata = get_metadata_from_tracking_db()
@@ -162,6 +159,7 @@ df = pd.DataFrame(tracking_entries)
 if df.empty:
     st.write("Keine Tracking-Daten gefunden.")
     st.stop()
+
 df["date"] = pd.to_datetime(df["date"], errors="coerce")
 df["track_name"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("track_name", "Unbekannter Track"))
 df["artist"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("artist", "Unbekannt"))
