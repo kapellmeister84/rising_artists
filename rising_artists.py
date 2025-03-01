@@ -66,9 +66,10 @@ def get_track_id_from_page(page_id):
     return ""
 
 def update_growth_for_measurement(entry_id, growth):
+    # Aktualisiert in Notion die Zahleneigenschaft "Growth" für einen Eintrag.
     url = f"{notion_page_endpoint}/{entry_id}"
-    data = {"properties": {"Growth": {"number": growth}}}
-    response = requests.patch(url, headers=notion_headers, data=json.dumps(data))
+    payload = {"properties": {"Growth": {"number": growth}}}
+    response = requests.patch(url, headers=notion_headers, json=payload)
     response.raise_for_status()
 
 @st.cache_data(show_spinner=False)
@@ -275,9 +276,9 @@ def update_popularity():
     st.success("Popularity wurde aktualisiert!")
     status_text.empty()
     
-    # Nach dem Aktualisieren der Popularity: Berechne Growth für jeden Song
+    # Berechne Growth für jeden Song und aktualisiere in Notion
     st.write("Berechne Growth für jeden Song...")
-    # Cache der Tracking-Daten leeren, damit neue Daten abgerufen werden
+    # Cache leeren, damit die neuesten Daten abgerufen werden
     get_tracking_entries.clear()
     updated_entries = get_tracking_entries()
     df_update = pd.DataFrame(updated_entries)
@@ -291,7 +292,6 @@ def update_popularity():
             growth = ((curr - prev) / prev) * 100 if prev and prev != 0 else 0
         else:
             growth = 0
-        # Aktualisiere den Growth-Wert in der neuesten Messung für diesen Song
         latest_entry_id = group.iloc[-1]["entry_id"]
         update_growth_for_measurement(latest_entry_id, growth)
 
@@ -325,13 +325,11 @@ if df.empty:
     st.write("Keine Tracking-Daten gefunden.")
     st.stop()
 
-# Datum parsen – hier ohne explizites Format, damit automatisch erkannt wird
 df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.tz_localize(None)
 df["track_name"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("track_name", "Unbekannter Track"))
 df["artist"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("artist", "Unbekannt"))
 df["release_date"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("release_date", ""))
 df["spotify_track_id"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("spotify_track_id", ""))
-# Verwende alle Messwerte
 df_all = df[df["date"].notnull()]
 
 cumulative = []
@@ -369,7 +367,6 @@ for row_df in rows:
         if row["spotify_track_id"]:
             cover_url, spotify_link = get_spotify_data(row["spotify_track_id"])
         with cols[idx]:
-            # Songtitel als reiner Text
             st.markdown(f"{row['track_name']}", unsafe_allow_html=True)
             # Cover als klickbarer Link zu Spotify
             if cover_url and spotify_link:
