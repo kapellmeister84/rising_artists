@@ -98,7 +98,7 @@ def get_spotify_data(spotify_track_id):
         cover_url = ""
         if data.get("album") and data["album"].get("images"):
             cover_url = data["album"]["images"][0].get("url", "")
-        spotify_link = data.get("external_urls", {}).get("spotify", "")
+        spotify_link = data["external_urls"].get("spotify", "")
         return cover_url, spotify_link
     return "", ""
 
@@ -143,7 +143,35 @@ def get_metadata_from_tracking_db():
         }
     return metadata
 
-# === Haupt-App ===
+# --- Platzhalterfunktionen für Buttons ---
+def get_new_music():
+    st.write("Rufe neue Musik aus Playlisten ab...")
+    # Hier deinen Code einfügen...
+    st.success("Neue Musik wurde hinzugefügt!")
+
+def update_popularity():
+    st.write("Füge neue Popularity-Messung hinzu...")
+    # Hier deinen Code einfügen...
+    st.success("Popularity wurde aktualisiert!")
+
+# --- Sidebar: Buttons und Filterformular ---
+with st.sidebar:
+    st.markdown("## Automatische Updates")
+    if st.button("Get New Music"):
+        get_new_music()
+    if st.button("Update Popularity"):
+        update_popularity()
+    st.markdown("---")
+    with st.form("filter_form"):
+        search_query = st.text_input("Song/Artist Suche", "")
+        filter_pop_range = st.slider("Popularity Range (letzter Messwert)", 0, 100, (0, 100), step=1, key="filter_pop")
+        filter_growth_threshold = st.number_input("Min. Growth % (zwischen den letzten beiden Messungen)", min_value=0.0, value=0.0, step=0.5, key="filter_growth")
+        filter_sort_option = st.selectbox("Sortiere nach", ["Popularity", "Release Date"], key="filter_sort")
+        filter_timeframe_option = st.selectbox("Zeitraum für Graphen (Ende)", ["3 Tage", "1 Woche", "2 Wochen", "3 Wochen"], key="filter_timeframe")
+        filter_timeframe_days = {"3 Tage": 3, "1 Woche": 7, "2 Wochen": 14, "3 Wochen": 21}
+        filter_days = filter_timeframe_days[filter_timeframe_option]
+        submitted = st.form_submit_button("Filter anwenden")
+
 st.title("Song Tracking Übersicht")
 
 # 1. Oben: Top 10 Songs mit größtem kumulativem Wachstum über 2 Tage
@@ -174,7 +202,7 @@ for song_id, group in df_2days.groupby("song_id"):
         continue
     first_pop = group.iloc[0]["popularity"]
     last_pop = group.iloc[-1]["popularity"]
-    cum_growth = ((last_pop - first_pop) / first_pop) * 100 if first_pop and first_pop != 0 else 0
+    growth = ((last_pop - first_pop) / first_pop) * 100 if first_pop and first_pop != 0 else 0
     meta = metadata.get(song_id, {"track_name": "Unbekannter Track", "artist": "Unbekannt", "release_date": "", "spotify_track_id": ""})
     cumulative.append({
         "song_id": song_id,
@@ -183,66 +211,49 @@ for song_id, group in df_2days.groupby("song_id"):
         "release_date": meta["release_date"],
         "spotify_track_id": meta["spotify_track_id"],
         "last_popularity": last_pop,
-        "cumulative_growth": cum_growth
+        "cumulative_growth": growth
     })
+
 cum_df = pd.DataFrame(cumulative)
 top10 = cum_df.sort_values("cumulative_growth", ascending=False).head(10)
 
-# Wir erstellen 5 Spalten (für 5 Karten in einer Zeile)
-cols = st.columns(5)
-
-for idx, row in top10.iterrows():
-    with cols[idx % 5]:
+# Erzeuge ein Grid via st.columns (5 Spalten) für die Top 10
+num_columns = 5
+rows = [top10.iloc[i:i+num_columns] for i in range(0, len(top10), num_columns)]
+for row_df in rows:
+    cols = st.columns(num_columns)
+    for idx, (_, row) in enumerate(row_df.iterrows()):
         cover_url, spotify_link = "", ""
         if row["spotify_track_id"]:
             cover_url, spotify_link = get_spotify_data(row["spotify_track_id"])
-        
-        # Bild
-        if cover_url:
-            st.image(cover_url, use_container_width=True)
-        else:
-            st.write("Kein Cover")
-        
-        # Titel und Artist auf eine Zeile beschränken
-        title = row["track_name"]
-        if len(title) > 40:
-            title = title[:40] + "..."
-        
-        artist_name = row["artist"]
-        if len(artist_name) > 40:
-            artist_name = artist_name[:40] + "..."
-        
-        st.markdown(f"<div style='text-align: center; font-weight: bold;'>{title}</div>", unsafe_allow_html=True)
-        st.markdown(f"<div style='text-align: center; font-style: italic;'>{artist_name}</div>", unsafe_allow_html=True)
-        st.markdown(f"<div style='text-align: center;'>Release: {row['release_date']}</div>", unsafe_allow_html=True)
-        st.markdown(f"<div style='text-align: center;'>Popularity: {row['last_popularity']:.1f}</div>", unsafe_allow_html=True)
-        if spotify_link:
-            st.markdown(f"<div style='text-align: center;'><a href='{spotify_link}' target='_blank'>Spotify Link</a></div>", unsafe_allow_html=True)
-        st.markdown(f"<div style='text-align: center; font-weight: bold;'>Growth: {row['cumulative_growth']:.1f}%</div>", unsafe_allow_html=True)
+        with cols[idx]:
+            if cover_url:
+                st.image(cover_url, use_container_width=True)
+            else:
+                st.write("Kein Cover")
+            short_title = row["track_name"][:40] + "..." if len(row["track_name"]) > 40 else row["track_name"]
+            short_artist = row["artist"][:40] + "..." if len(row["artist"]) > 40 else row["artist"]
+            st.markdown(f"<div style='text-align: center; font-weight: bold;'>{short_title}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='text-align: center; font-style: italic;'>{short_artist}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='text-align: center;'>Release: {row['release_date']}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='text-align: center;'>Popularity: {row['last_popularity']:.1f}</div>", unsafe_allow_html=True)
+            if spotify_link:
+                st.markdown(f"<div style='text-align: center;'><a href='{spotify_link}' target='_blank'>Spotify Link</a></div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='text-align: center; font-weight: bold;'>Growth: {row['cumulative_growth']:.1f}%</div>", unsafe_allow_html=True)
 
 # 2. Unterhalb: Ergebnisse erst anzeigen, wenn Filter gesetzt wurden
 st.header("Songs filtern")
-
-with st.sidebar.form("filter_form"):
-    search_query = st.text_input("Song/Artist Suche", "")
-    filter_pop_range = st.slider("Popularity Range (letzter Messwert)", 0, 100, (0, 100), step=1, key="filter_pop")
-    filter_growth_threshold = st.number_input("Min. Growth % (zwischen den letzten beiden Messungen)", min_value=0.0, value=0.0, step=0.5, key="filter_growth")
-    filter_sort_option = st.selectbox("Sortiere nach", ["Popularity", "Release Date"], key="filter_sort")
-    filter_timeframe_option = st.selectbox("Zeitraum für Graphen (Ende)", ["3 Tage", "1 Woche", "2 Wochen", "3 Wochen"], key="filter_timeframe")
-    filter_timeframe_days = {"3 Tage": 3, "1 Woche": 7, "2 Wochen": 14, "3 Wochen": 21}
-    filter_days = filter_timeframe_days[filter_timeframe_option]
-    submitted = st.form_submit_button("Filter anwenden")
 
 if submitted:
     last_data = []
     for song_id, group in df.groupby("song_id"):
         group = group.sort_values("date")
         last_pop = group.iloc[-1]["popularity"]
-        growth = 0.0
+        growth_val = 0.0
         if len(group) >= 2:
             prev_pop = group.iloc[-2]["popularity"]
             if prev_pop != 0:
-                growth = ((last_pop - prev_pop) / prev_pop) * 100
+                growth_val = ((last_pop - prev_pop) / prev_pop) * 100
         meta = metadata.get(song_id, {"track_name": "Unbekannter Track", "artist": "Unbekannt", "release_date": "", "spotify_track_id": ""})
         last_data.append({
             "song_id": song_id,
@@ -251,7 +262,7 @@ if submitted:
             "release_date": meta["release_date"],
             "spotify_track_id": meta["spotify_track_id"],
             "last_popularity": last_pop,
-            "growth": growth
+            "growth": growth_val
         })
     last_df = pd.DataFrame(last_data)
     
@@ -274,7 +285,7 @@ if submitted:
     
     st.write("Gefilterte Songs:")
     for idx, row in filtered_df.iterrows():
-        cover_url, spotify_link = ("", "")
+        cover_url, spotify_link = "", ""
         if row["spotify_track_id"]:
             cover_url, spotify_link = get_spotify_data(row["spotify_track_id"])
         with st.container():
