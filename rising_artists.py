@@ -128,10 +128,14 @@ def get_metadata_from_tracking_db():
         if song_relations:
             related_page_id = song_relations[0].get("id")
             track_name = track_names.get(related_page_id, "Unbekannter Track")
-            spotify_track_id = get_track_id_from_page(related_page_id)
+            # Hier holen wir den Wert aus dem Property "Track ID" – das ist nun die Notion Track ID
+            notion_track_id = get_track_id_from_page(related_page_id)
+            # Für Cover und Spotify-Link nutzen wir weiterhin den gleichen Wert (falls vorhanden)
+            spotify_track_id = notion_track_id  
             key = related_page_id
         else:
             track_name = "Unbekannter Track"
+            notion_track_id = ""
             spotify_track_id = ""
             key = page.get("id")
         artist_rollup = props.get("Artist", {}).get("rollup", {})
@@ -142,6 +146,7 @@ def get_metadata_from_tracking_db():
             "track_name": track_name,
             "artist": artist,
             "release_date": release_date,
+            "notion_track_id": notion_track_id,
             "spotify_track_id": spotify_track_id
         }
     return metadata
@@ -232,13 +237,11 @@ def update_popularity():
     song_to_track = {}
     for idx, song in enumerate(song_pages):
         page_id = song["page_id"]
-        # Hole Songname – falls get_song_name den Seiten-ID zurückgibt, versuchen wir den gecachten Trackname
         song_name = get_song_name(page_id)
-        if song_name == page_id:
-            song_name = get_track_name_from_page(page_id)
         status_text.text(f"Verarbeite Song: {song_name}")
         if not song_name:
             continue
+        # Verwende als Schlüssel die Seiten-ID – so bleibt für denselben Song immer dieselbe ID erhalten.
         if page_id not in song_to_track:
             track_id = get_track_id_from_page(page_id)
             if not track_id:
@@ -251,6 +254,7 @@ def update_popularity():
     status_text.text("Alle Songs verarbeitet.")
     st.success("Popularity wurde aktualisiert!")
     status_text.empty()
+
 # --- Sidebar: Buttons und Filterformular ---
 with st.sidebar:
     st.markdown("## Automatische Updates")
@@ -288,6 +292,7 @@ df["track_name"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("track_na
 df["artist"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("artist", "Unbekannt"))
 df["release_date"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("release_date", ""))
 df["spotify_track_id"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("spotify_track_id", ""))
+df["notion_track_id"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("notion_track_id", x))
 
 # Verwende alle Messungen (nicht nur 2 Tage zurück)
 df_all = df[df["date"].notnull()]
@@ -300,13 +305,14 @@ for song_id, group in df_all.groupby("song_id"):
     first_pop = group.iloc[0]["popularity"]
     last_pop = group.iloc[-1]["popularity"]
     growth = ((last_pop - first_pop) / first_pop) * 100 if first_pop and first_pop != 0 else 0
-    meta = metadata.get(song_id, {"track_name": "Unbekannter Track", "artist": "Unbekannt", "release_date": "", "spotify_track_id": ""})
+    meta = metadata.get(song_id, {"track_name": "Unbekannter Track", "artist": "Unbekannt", "release_date": "", "notion_track_id": "", "spotify_track_id": ""})
     cumulative.append({
         "song_id": song_id,
         "track_name": meta["track_name"],
         "artist": meta["artist"],
         "release_date": meta["release_date"],
         "spotify_track_id": meta["spotify_track_id"],
+        "notion_track_id": meta.get("notion_track_id", song_id),
         "last_popularity": last_pop,
         "cumulative_growth": growth
     })
@@ -355,13 +361,14 @@ if submitted:
             prev_pop = group.iloc[-2]["popularity"]
             if prev_pop and prev_pop != 0:
                 growth_val = ((last_pop - prev_pop) / prev_pop) * 100
-        meta = metadata.get(song_id, {"track_name": "Unbekannter Track", "artist": "Unbekannt", "release_date": "", "spotify_track_id": ""})
+        meta = metadata.get(song_id, {"track_name": "Unbekannter Track", "artist": "Unbekannt", "release_date": "", "spotify_track_id": "", "notion_track_id": song_id})
         last_data.append({
             "song_id": song_id,
             "track_name": meta.get("track_name", "Unbekannter Track"),
             "artist": meta.get("artist", "Unbekannt"),
             "release_date": meta.get("release_date", ""),
             "spotify_track_id": meta.get("spotify_track_id", ""),
+            "notion_track_id": meta.get("notion_track_id", song_id),
             "last_popularity": last_pop,
             "growth": growth_val
         })
@@ -397,8 +404,9 @@ Popularity: {row['last_popularity']:.1f} | Growth: {row['growth']:.1f}%""")
                 st.image(cover_url, width=100)
             if spotify_link:
                 st.markdown(f"[Spotify Link]({spotify_link})")
+            # Hier wird der Graph anhand der Notion Track ID gefiltert
             with st.expander(f"{row['track_name']} - {row['artist']} anzeigen"):
-                song_history = df_all[df_all["song_id"] == row["song_id"]].sort_values("date")
+                song_history = df_all[df_all["notion_track_id"] == row["notion_track_id"]].sort_values("date")
                 if len(song_history) == 1:
                     fig = px.scatter(song_history, x="date", y="popularity",
                                      title=f"{row['track_name']} - {row['artist']}",
@@ -408,6 +416,6 @@ Popularity: {row['last_popularity']:.1f} | Growth: {row['growth']:.1f}%""")
                                   title=f"{row['track_name']} - {row['artist']}",
                                   labels={"date": "Datum", "popularity": "Popularity Score"},
                                   markers=True)
-                st.plotly_chart(fig, use_container_width=True, key=f"chart_{row['song_id']}")
+                st.plotly_chart(fig, use_container_width=True, key=f"chart_{row['notion_track_id']}")
 else:
     st.write("Bitte verwenden Sie das Filterformular in der Sidebar, um Ergebnisse anzuzeigen.")
