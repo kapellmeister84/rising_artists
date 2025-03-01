@@ -90,6 +90,7 @@ def get_tracking_entries():
 
 @st.cache_data(show_spinner=False)
 def get_spotify_data(spotify_track_id):
+    """Liefert Cover und Spotify-Link (gecacht)."""
     url = f"https://api.spotify.com/v1/tracks/{spotify_track_id}"
     response = requests.get(url, headers={"Authorization": f"Bearer {SPOTIFY_TOKEN}"})
     if response.status_code == 200:
@@ -153,8 +154,14 @@ def update_popularity():
     # Hier deinen Code einfügen...
     st.success("Popularity wurde aktualisiert!")
 
-# --- Sidebar: Filterformular und Buttons ---
+# --- Sidebar: Buttons und Filterformular ---
 with st.sidebar:
+    st.markdown("## Automatische Updates")
+    if st.button("Get New Music"):
+        get_new_music()
+    if st.button("Update Popularity"):
+        update_popularity()
+    st.markdown("---")
     with st.form("filter_form"):
         search_query = st.text_input("Song/Artist Suche", "")
         filter_pop_range = st.slider("Popularity Range (letzter Messwert)", 0, 100, (0, 100), step=1, key="filter_pop")
@@ -164,12 +171,6 @@ with st.sidebar:
         filter_timeframe_days = {"3 Tage": 3, "1 Woche": 7, "2 Wochen": 14, "3 Wochen": 21}
         filter_days = filter_timeframe_days[filter_timeframe_option]
         submitted = st.form_submit_button("Filter anwenden")
-    
-    st.markdown("---")
-    if st.button("Get New Music"):
-        get_new_music()
-    if st.button("Update Popularity"):
-        update_popularity()
 
 st.title("Song Tracking Übersicht")
 
@@ -216,7 +217,7 @@ for song_id, group in df_2days.groupby("song_id"):
 cum_df = pd.DataFrame(cumulative)
 top10 = cum_df.sort_values("cumulative_growth", ascending=False).head(10)
 
-# Erzeuge ein Grid (5 Spalten) via st.columns für die Top 10
+# Erzeuge ein Grid via st.columns (5 Spalten) für die Top 10
 num_columns = 5
 rows = [top10.iloc[i:i+num_columns] for i in range(0, len(top10), num_columns)]
 for row_df in rows:
