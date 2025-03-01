@@ -191,8 +191,8 @@ def update_popularity():
     progress_bar = st.progress(0)
     status_text = st.empty()
     
-    songs_database_id = "1a9b6204cede8006b67fd247dc660ba4"  # Songs-Datenbank
-    week_database_id = "1a9b6204cede80e29338ede2c76999f2"    # Week-Datenbank
+    songs_database_id = "1a9b6204cede8006b67fd247dc660ba4"
+    week_database_id = "1a9b6204cede80e29338ede2c76999f2"
 
     def get_all_song_page_ids():
         url = f"{notion_query_endpoint}/{songs_database_id}/query"
@@ -338,6 +338,8 @@ if cum_df.empty:
     st.write("Keine Daten für die Top 10 verfügbar.")
     top10 = pd.DataFrame()
 else:
+    # Top 10 werden ausgewählt, indem das kumulative Wachstum (prozentuale Veränderung vom ersten zum letzten Messwert) berechnet
+    # und die Songs absteigend sortiert werden; die ersten 10 werden angezeigt.
     top10 = cum_df.sort_values("cumulative_growth", ascending=False).head(10)
 
 num_columns = 5
@@ -349,12 +351,9 @@ for row_df in rows:
         if row["spotify_track_id"]:
             cover_url, spotify_link = get_spotify_data(row["spotify_track_id"])
         with cols[idx]:
-            # Spotify-Link im Songtitel
-            if spotify_link:
-                st.markdown(f"[{row['track_name']}]({spotify_link})", unsafe_allow_html=True)
-            else:
-                st.markdown(f"{row['track_name']}", unsafe_allow_html=True)
-            # Cover als klickbarer Link: Wird in ein HTML-Image eingebettet
+            # Songtitel wird ohne Link ausgegeben
+            st.markdown(f"{row['track_name']}", unsafe_allow_html=True)
+            # Cover als klickbarer Link ins Spotify: Wird als HTML-Image eingebettet
             if cover_url and spotify_link:
                 st.markdown(f'<a href="{spotify_link}" target="_blank"><img src="{cover_url}" style="width:100%;" /></a>', unsafe_allow_html=True)
             elif cover_url:
