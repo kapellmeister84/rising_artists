@@ -46,13 +46,12 @@ def get_song_metadata():
     for page in data.get("results", []):
         page_id = page["id"]
         props = page["properties"]
-        # Song Title
+        # Song Title: Alle Textfragmente zusammenfügen
         title_prop = props.get("Song Title", {}).get("title", [])
-        song_title = title_prop[0]["plain_text"].strip() if title_prop else "Unbekannter Song"
-        # Artist Name
-        artist = "Unbekannt"
-        if "Artist Name" in props and props["Artist Name"]["rich_text"]:
-            artist = props["Artist Name"]["rich_text"][0]["plain_text"].strip()
+        song_title = "".join([t.get("plain_text", "") for t in title_prop]).strip() if title_prop else "Unbekannter Song"
+        # Artist Name: Alle Textfragmente zusammenfügen
+        artist_prop = props.get("Artist Name", {}).get("rich_text", [])
+        artist = "".join([t.get("plain_text", "") for t in artist_prop]).strip() if artist_prop else "Unbekannt"
         # Release Date
         release_date = ""
         if "Release Date" in props and props["Release Date"].get("date"):
@@ -85,7 +84,7 @@ if df.empty:
 
 # Konvertiere das Datum in datetime (mit Fehlerbehandlung)
 df["date"] = pd.to_datetime(df["date"], errors="coerce")
-# Füge Song-Metadaten hinzu
+# Füge Song-Metadaten hinzu (tatsächliche Namen aus der Songs-Datenbank)
 df["song_title"] = df["song_id"].map(lambda x: song_metadata.get(x, {}).get("song_title", ""))
 df["artist"] = df["song_id"].map(lambda x: song_metadata.get(x, {}).get("artist", "Unbekannt"))
 df["release_date"] = df["song_id"].map(lambda x: song_metadata.get(x, {}).get("release_date", ""))
