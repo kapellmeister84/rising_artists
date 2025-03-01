@@ -87,7 +87,6 @@ def get_tracking_entries():
         entry_id = page.get("id")
         props = page.get("properties", {})
         pop = props.get("Popularity Score", {}).get("number")
-        # Versuche zuerst "Date created", sonst den systemeigenen created_time:
         date_str = props.get("Date created", {}).get("date", {}).get("start")
         if not date_str:
             date_str = page.get("created_time")
@@ -155,7 +154,7 @@ def get_metadata_from_tracking_db():
         }
     return metadata
 
-# Zuerst Tracking-Daten laden und DataFrame erstellen
+# Tracking-Daten laden und DataFrame erstellen
 tracking_entries = get_tracking_entries()
 metadata = get_metadata_from_tracking_db()
 df = pd.DataFrame(tracking_entries)
@@ -283,19 +282,20 @@ with st.sidebar:
             status_text.empty()
         update_popularity()
     st.markdown("---")
-    filter_pop_range = st.slider("Popularity Range (letzter Messwert)", pop_min, pop_max, (pop_min, pop_max), step=1, key="filter_pop")
-    filter_growth_threshold = st.number_input("Min. Growth % (zwischen den letzten beiden Messungen)", min_value=0.0, value=0.0, step=0.5, key="filter_growth")
-    filter_sort_option = st.selectbox("Sortiere nach", ["Popularity", "Release Date"], key="filter_sort")
-    filter_timeframe_option = st.selectbox("Zeitraum für Graphen (Ende)", ["3 Tage", "1 Woche", "2 Wochen", "3 Wochen"], key="filter_timeframe")
-    filter_timeframe_days = {"3 Tage": 3, "1 Woche": 7, "2 Wochen": 14, "3 Wochen": 21}
-    filter_days = filter_timeframe_days[filter_timeframe_option]
-    submitted = st.form_submit_button("Filter anwenden")
+    with st.form("filter_form"):
+        search_query = st.text_input("Song/Artist Suche", "")
+        filter_pop_range = st.slider("Popularity Range (letzter Messwert)", pop_min, pop_max, (pop_min, pop_max), step=1, key="filter_pop")
+        filter_growth_threshold = st.number_input("Min. Growth % (zwischen den letzten beiden Messungen)", min_value=0.0, value=0.0, step=0.5, key="filter_growth")
+        filter_sort_option = st.selectbox("Sortiere nach", ["Popularity", "Release Date"], key="filter_sort")
+        filter_timeframe_option = st.selectbox("Zeitraum für Graphen (Ende)", ["3 Tage", "1 Woche", "2 Wochen", "3 Wochen"], key="filter_timeframe")
+        filter_timeframe_days = {"3 Tage": 3, "1 Woche": 7, "2 Wochen": 14, "3 Wochen": 21}
+        filter_days = filter_timeframe_days[filter_timeframe_option]
+        submitted = st.form_submit_button("Filter anwenden")
 
 st.title("Song Tracking Übersicht")
 
 # 1. Oben: Top 10 Songs – Wachstum über alle Messungen
 st.header("Top 10 Songs – Wachstum über alle Messungen")
-
 cumulative = []
 for song_id, group in df_all.groupby("song_id"):
     group = group.sort_values("date")
