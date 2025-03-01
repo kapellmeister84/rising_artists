@@ -149,25 +149,24 @@ def get_new_music():
     st.write("Rufe neue Musik aus Playlisten ab...")
     progress_bar = st.progress(0)
     status_text = st.empty()
-    # Beispielhafte Song-Liste, die abgerufen werden soll:
+    # Beispielhafte Song-Liste (Simulation)
     song_list = ["Song A", "Song B", "Song C", "Song D", "Song E"]
     for i, song in enumerate(song_list):
         status_text.text(f"Rufe {song} ab...")
-        time.sleep(1)  # Simulation der Verzögerung
+        time.sleep(1)  # Simulation einer Verzögerung
         progress_bar.progress((i + 1) / len(song_list))
     st.success("Neue Musik wurde hinzugefügt!")
     st.session_state.get_new_music_week = datetime.datetime.now().isocalendar()[1]
-    status_text.empty()  # Statustext löschen
+    status_text.empty()
 
 def update_popularity():
     st.write("Füge neue Popularity-Messung hinzu...")
     progress_bar = st.progress(0)
     status_text = st.empty()
-    # Beispielhafter Ablauf zur Aktualisierung der Popularity (Simulation)
-    update_steps = 5
+    update_steps = 5  # Beispiel: 5 Schritte
     for i in range(update_steps):
         status_text.text(f"Update Popularity: Schritt {i+1} von {update_steps}")
-        time.sleep(1)  # Simulation der Verzögerung
+        time.sleep(1)  # Simulation einer Verzögerung
         progress_bar.progress((i + 1) / update_steps)
     st.success("Popularity wurde aktualisiert!")
     now = datetime.datetime.now()
@@ -189,7 +188,7 @@ with st.sidebar:
     if now_dt.weekday() == 4 and st.session_state.get_new_music_week != now_dt.isocalendar()[1]:
         if st.button("Get New Music"):
             get_new_music()
-    # Update Popularity: erscheint, wenn Get New Music gedrückt wurde und der aktuelle Slot noch nicht aktualisiert wurde
+    # Update Popularity: erscheint, wenn Get New Music gedrückt wurde und aktueller Slot (00 oder 17) noch nicht aktualisiert wurde
     current_slot = f"{now_dt.date()}_{'00' if now_dt.hour < 17 else '17'}"
     if st.session_state.get_new_music_week == now_dt.isocalendar()[1] and current_slot not in st.session_state.updated_popularity_slots:
         if st.button("Update Popularity"):
@@ -219,7 +218,8 @@ if df.empty:
     st.write("Keine Tracking-Daten gefunden.")
     st.stop()
 
-df["date"] = pd.to_datetime(df["date"], errors="coerce")
+# Aktualisiere die Datumsspalte mit dem richtigen Format (yyyy.mm.dd. hh:mm)
+df["date"] = pd.to_datetime(df["date"], format="%Y.%m.%d. %H:%M", errors="coerce")
 df["track_name"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("track_name", "Unbekannter Track"))
 df["artist"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("artist", "Unbekannt"))
 df["release_date"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("release_date", ""))
