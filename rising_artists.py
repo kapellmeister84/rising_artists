@@ -194,7 +194,7 @@ def update_popularity():
             song_name = "".join(item.get("plain_text", "") for item in title_items).strip()
             if song_name:
                 return song_name
-        return page_id  # Fallback: Page-ID nutzen
+        return page_id  # Fallback: Seiten-ID
 
     def create_week_entry(song_page_id, popularity_score, track_id):
         now_iso = datetime.datetime.now().isoformat()
@@ -224,29 +224,33 @@ def update_popularity():
                 }
             }
         }
-        response = requests.post(notion_page_endpoint, headers=notion_headers, json=payload)
-        # Keine Ausgabe – nur der Week Entry wird erstellt
+        requests.post(notion_page_endpoint, headers=notion_headers, json=payload)
+        # Keine Ausgabe
 
     song_pages = get_all_song_page_ids()
     total = len(song_pages)
-    # Verwende als Schlüssel die Seiten-ID, damit für jeden Song immer dieselbe ID genutzt wird
     song_to_track = {}
     for idx, song in enumerate(song_pages):
         page_id = song["page_id"]
+        # Hole Songname – falls get_song_name den Seiten-ID zurückgibt, versuchen wir den gecachten Trackname
         song_name = get_song_name(page_id)
+        if song_name == page_id:
+            song_name = get_track_name_from_page(page_id)
         status_text.text(f"Verarbeite Song: {song_name}")
-        # Zuerst versuchen, eine bereits vergebene Notion Track ID abzurufen
-        track_id = get_track_id_from_page(page_id)
-        if not track_id:
-            if page_id not in song_to_track:
-                song_to_track[page_id] = str(uuid.uuid4())
+        if not song_name:
+            continue
+        if page_id not in song_to_track:
+            track_id = get_track_id_from_page(page_id)
+            if not track_id:
+                track_id = str(uuid.uuid4())
+            song_to_track[page_id] = track_id
+        else:
             track_id = song_to_track[page_id]
         create_week_entry(page_id, song["popularity"], track_id)
         progress_bar.progress(int((idx + 1) / total * 100))
     status_text.text("Alle Songs verarbeitet.")
     st.success("Popularity wurde aktualisiert!")
     status_text.empty()
-
 # --- Sidebar: Buttons und Filterformular ---
 with st.sidebar:
     st.markdown("## Automatische Updates")
