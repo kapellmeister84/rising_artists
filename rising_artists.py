@@ -225,20 +225,22 @@ def update_popularity():
             }
         }
         response = requests.post(notion_page_endpoint, headers=notion_headers, json=payload)
-        # Keine Rückgabe oder Anzeige
+        # Keine Ausgabe – nur der Week Entry wird erstellt
 
     song_pages = get_all_song_page_ids()
     total = len(song_pages)
+    # Verwende als Schlüssel die Seiten-ID, damit für jeden Song immer dieselbe ID genutzt wird
     song_to_track = {}
     for idx, song in enumerate(song_pages):
         page_id = song["page_id"]
         song_name = get_song_name(page_id)
         status_text.text(f"Verarbeite Song: {song_name}")
-        if not song_name:
-            continue
-        if song_name not in song_to_track:
-            song_to_track[song_name] = str(uuid.uuid4())
-        track_id = song_to_track[song_name]
+        # Zuerst versuchen, eine bereits vergebene Notion Track ID abzurufen
+        track_id = get_track_id_from_page(page_id)
+        if not track_id:
+            if page_id not in song_to_track:
+                song_to_track[page_id] = str(uuid.uuid4())
+            track_id = song_to_track[page_id]
         create_week_entry(page_id, song["popularity"], track_id)
         progress_bar.progress(int((idx + 1) / total * 100))
     status_text.text("Alle Songs verarbeitet.")
