@@ -82,7 +82,7 @@ def get_tracking_entries():
         entry_id = page.get("id")
         props = page.get("properties", {})
         pop = props.get("Popularity Score", {}).get("number")
-        # Hier wird das Datum aus dem Property "Date" gelesen, z.B. "2025/03/01 19:18"
+        # Hier wird das Property "Date" ausgelesen (z. B. "2025/03/01 19:18" oder als ISO-String)
         date_str = props.get("Date", {}).get("date", {}).get("start")
         song_relations = props.get("Song", {}).get("relation", [])
         for relation in song_relations:
@@ -92,7 +92,7 @@ def get_tracking_entries():
 
 @st.cache_data(show_spinner=False)
 def get_spotify_data(spotify_track_id):
-    """Liefert (Cover-URL, Spotify-Link) für den Track."""
+    """Liefert Cover und Spotify-Link (gecacht)."""
     url = f"https://api.spotify.com/v1/tracks/{spotify_track_id}"
     response = requests.get(url, headers={"Authorization": f"Bearer {SPOTIFY_TOKEN}"})
     if response.status_code == 200:
@@ -150,7 +150,7 @@ def get_new_music():
     st.write("Rufe neue Musik aus Playlisten ab...")
     progress_bar = st.progress(0)
     status_text = st.empty()
-    # Beispiel: Simuliere den Abruf von 5 Songs
+    # Simulation: Abruf von 5 Songs
     song_list = ["Song A", "Song B", "Song C", "Song D", "Song E"]
     for i, song in enumerate(song_list):
         status_text.text(f"Rufe {song} ab...")
@@ -195,8 +195,8 @@ with st.sidebar:
 
 st.title("Song Tracking Übersicht")
 
-# 1. Oben: Top 10 Songs mit größtem kumulativem Wachstum über 2 Tage
-st.header("Top 10 Songs – Wachstum über 2 Tage")
+# 1. Oben: Top 10 Songs mit größtem kumulativem Wachstum
+st.header("Top 10 Songs – Wachstum über alle Messungen")
 
 tracking_entries = get_tracking_entries()
 metadata = get_metadata_from_tracking_db()
@@ -206,14 +206,18 @@ if df.empty:
     st.write("Keine Tracking-Daten gefunden.")
     st.stop()
 
-# Parst das Datum mit deinem Format "YYYY/MM/DD HH:MM" und macht es tz-naiv
-df["date"] = pd.to_datetime(df["date"], format="%Y/%m/%d %H:%M", errors="coerce").dt.tz_localize(None)
-now = pd.Timestamp.now()  # tz-naiv
-start_2days = now - pd.Timedelta(days=2)
-df_2days = df[df["date"] >= start_2days]
+# Datum parsen – hier ohne explizites Format, damit automatisch erkannt wird
+df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.tz_localize(None)
+df["track_name"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("track_name", "Unbekannter Track"))
+df["artist"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("artist", "Unbekannt"))
+df["release_date"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("release_date", ""))
+df["spotify_track_id"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("spotify_track_id", ""))
+
+# Verwende alle Messungen (nicht nur 2 Tage zurück)
+df_all = df[df["date"].notnull()]
 
 cumulative = []
-for song_id, group in df_2days.groupby("song_id"):
+for song_id, group in df_all.groupby("song_id"):
     group = group.sort_values("date")
     if group.empty:
         continue
@@ -267,7 +271,7 @@ st.header("Songs filtern")
 
 if submitted:
     last_data = []
-    for song_id, group in df.groupby("song_id"):
+    for song_id, group in df_all.groupby("song_id"):
         group = group.sort_values("date")
         last_pop = group.iloc[-1]["popularity"]
         growth_val = 0.0
@@ -318,7 +322,7 @@ Popularity: {row['last_popularity']:.1f} | Growth: {row['growth']:.1f}%""")
             if spotify_link:
                 st.markdown(f"[Spotify Link]({spotify_link})")
             with st.expander(f"{row['track_name']} - {row['artist']} anzeigen"):
-                song_history = df[df["song_id"] == row["song_id"]].sort_values("date")
+                song_history = df_all[df_all["song_id"] == row["song_id"]].sort_values("date")
                 if len(song_history) == 1:
                     fig = px.scatter(song_history, x="date", y="popularity",
                                      title=f"{row['track_name']} - {row['artist']}",
