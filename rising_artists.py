@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 st.set_page_config(layout="wide")
 
 # === Notion-Konfiguration ===
-tracking_db_id = "1a9b6204cede80e29338ede2c76999f2"  # Tracking-Datenbank (enthält Rollups für "Artist" und "Release Date", Relation "Song")
+tracking_db_id = "1a9b6204cede80e29338ede2c76999f2"  # Deine Tracking-Datenbank
 notion_secret = "secret_yYvZbk7zcKy0Joe3usdCHMbbZmAFHnCKrF7NvEkWY6E"
 notion_query_endpoint = "https://api.notion.com/v1/databases"
 notion_page_endpoint = "https://api.notion.com/v1/pages"
@@ -72,7 +72,7 @@ def update_growth_for_measurement(entry_id, growth):
     response.raise_for_status()
 
 def get_tracking_entries():
-    """Popularity muss aktuell sein, daher kein Caching."""
+    """Holt Einträge aus der Tracking-Datenbank (Popularity-Scanner) und liefert sie in einer Liste zurück."""
     url = f"{notion_query_endpoint}/{tracking_db_id}/query"
     response = requests.post(url, headers=notion_headers)
     response.raise_for_status()
@@ -82,6 +82,7 @@ def get_tracking_entries():
         entry_id = page.get("id")
         props = page.get("properties", {})
         pop = props.get("Popularity Score", {}).get("number")
+        # Hier wird das Property "Date" ausgelesen
         date_str = props.get("Date", {}).get("date", {}).get("start")
         song_relations = props.get("Song", {}).get("relation", [])
         for relation in song_relations:
@@ -91,7 +92,7 @@ def get_tracking_entries():
 
 @st.cache_data(show_spinner=False)
 def get_spotify_data(spotify_track_id):
-    """Liefert Cover und Spotify-Link (gecacht)."""
+    """Cover und Spotify-Link (gecacht)."""
     url = f"https://api.spotify.com/v1/tracks/{spotify_track_id}"
     response = requests.get(url, headers={"Authorization": f"Bearer {SPOTIFY_TOKEN}"})
     if response.status_code == 200:
@@ -105,7 +106,7 @@ def get_spotify_data(spotify_track_id):
 
 @st.cache_data(show_spinner=False)
 def get_metadata_from_tracking_db():
-    """Artist, Release Date, Track ID etc. (gecacht)."""
+    """Liest Artist, Release Date, Track ID usw. aus derselben DB (oder einer verknüpften DB)."""
     url = f"{notion_query_endpoint}/{tracking_db_id}/query"
     response = requests.post(url, headers=notion_headers)
     response.raise_for_status()
@@ -144,16 +145,16 @@ def get_metadata_from_tracking_db():
         }
     return metadata
 
-# --- Platzhalterfunktionen für Buttons mit Fortschrittsbalken ---
+# --- Beispiel: Buttons mit Fortschrittsbalken ---
 def get_new_music():
     st.write("Rufe neue Musik aus Playlisten ab...")
     progress_bar = st.progress(0)
     status_text = st.empty()
-    # Beispielhafte Simulation: Abruf von 5 Songs
+    # Beispielhafter Ablauf: 5 Songs
     song_list = ["Song A", "Song B", "Song C", "Song D", "Song E"]
     for i, song in enumerate(song_list):
         status_text.text(f"Rufe {song} ab...")
-        time.sleep(1)  # Simulation einer Verzögerung
+        time.sleep(1)  # Simulation
         progress_bar.progress((i + 1) / len(song_list))
     st.success("Neue Musik wurde hinzugefügt!")
     st.session_state.get_new_music_week = datetime.datetime.now().isocalendar()[1]
@@ -163,10 +164,10 @@ def update_popularity():
     st.write("Füge neue Popularity-Messung hinzu...")
     progress_bar = st.progress(0)
     status_text = st.empty()
-    update_steps = 5  # Beispiel: 5 Schritte
+    update_steps = 5
     for i in range(update_steps):
         status_text.text(f"Update Popularity: Schritt {i+1} von {update_steps}")
-        time.sleep(1)  # Simulation einer Verzögerung
+        time.sleep(1)
         progress_bar.progress((i + 1) / update_steps)
     st.success("Popularity wurde aktualisiert!")
     now = datetime.datetime.now()
@@ -176,7 +177,6 @@ def update_popularity():
 
 # --- Sidebar: Buttons und Filterformular ---
 with st.sidebar:
-    # Initialisiere Session-State Variablen, falls nicht vorhanden
     if "get_new_music_week" not in st.session_state:
         st.session_state.get_new_music_week = None
     if "updated_popularity_slots" not in st.session_state:
@@ -188,7 +188,7 @@ with st.sidebar:
     if now_dt.weekday() == 4 and st.session_state.get_new_music_week != now_dt.isocalendar()[1]:
         if st.button("Get New Music"):
             get_new_music()
-    # Update Popularity: erscheint, wenn Get New Music gedrückt wurde und aktueller Slot (00 oder 17) noch nicht aktualisiert wurde
+    # Update Popularity: nur wenn Get New Music gedrückt wurde und aktueller Slot noch nicht aktualisiert wurde
     current_slot = f"{now_dt.date()}_{'00' if now_dt.hour < 17 else '17'}"
     if st.session_state.get_new_music_week == now_dt.isocalendar()[1] and current_slot not in st.session_state.updated_popularity_slots:
         if st.button("Update Popularity"):
@@ -218,8 +218,8 @@ if df.empty:
     st.write("Keine Tracking-Daten gefunden.")
     st.stop()
 
-# Konvertiere das Datum mit deinem Format (yyyy.mm.dd. hh:mm) als tz-naiv
-df["date"] = pd.to_datetime(df["date"], format="%Y.%m.%d. %H:%M", errors="coerce")
+# Wichtig: parse mit deinem Format "YYYY/MM/DD HH:MM"
+df["date"] = pd.to_datetime(df["date"], format="%Y/%m/%d %H:%M", errors="coerce")
 now = pd.Timestamp.now()  # tz-naiv
 start_2days = now - pd.Timedelta(days=2)
 df_2days = df[df["date"] >= start_2days]
@@ -245,12 +245,12 @@ for song_id, group in df_2days.groupby("song_id"):
 
 cum_df = pd.DataFrame(cumulative)
 if cum_df.empty:
-    st.write("Keine Top 10-Daten verfügbar.")
+    st.write("Keine Daten für die Top 10 verfügbar.")
     top10 = pd.DataFrame()
 else:
     top10 = cum_df.sort_values("cumulative_growth", ascending=False).head(10)
 
-# Erzeuge ein Grid via st.columns (5 Spalten) für die Top 10
+# Galerie: 5 Spalten
 num_columns = 5
 rows = [top10.iloc[i:i+num_columns] for i in range(0, len(top10), num_columns)]
 for row_df in rows:
@@ -274,7 +274,7 @@ for row_df in rows:
                 st.markdown(f"<div style='text-align: center;'><a href='{spotify_link}' target='_blank'>Spotify Link</a></div>", unsafe_allow_html=True)
             st.markdown(f"<div style='text-align: center; font-weight: bold;'>Growth: {row['cumulative_growth']:.1f}%</div>", unsafe_allow_html=True)
 
-# 2. Unterhalb: Ergebnisse erst anzeigen, wenn Filter gesetzt wurden
+# 2. Filterergebnisse
 st.header("Songs filtern")
 
 if submitted:
