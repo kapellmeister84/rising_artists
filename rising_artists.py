@@ -274,6 +274,26 @@ def update_popularity():
     status_text.text("Alle Songs verarbeitet.")
     st.success("Popularity wurde aktualisiert!")
     status_text.empty()
+    
+    # Nach dem Aktualisieren der Popularity: Berechne Growth für jeden Song
+    st.write("Berechne Growth für jeden Song...")
+    # Cache der Tracking-Daten leeren, damit neue Daten abgerufen werden
+    get_tracking_entries.clear()
+    updated_entries = get_tracking_entries()
+    df_update = pd.DataFrame(updated_entries)
+    df_update["date"] = pd.to_datetime(df_update["date"], errors="coerce")
+    df_update = df_update.dropna(subset=["date", "song_id"])
+    for song_id, group in df_update.groupby("song_id"):
+        group = group.sort_values("date")
+        if len(group) >= 2:
+            prev = group.iloc[-2]["popularity"]
+            curr = group.iloc[-1]["popularity"]
+            growth = ((curr - prev) / prev) * 100 if prev and prev != 0 else 0
+        else:
+            growth = 0
+        # Aktualisiere den Growth-Wert in der neuesten Messung für diesen Song
+        latest_entry_id = group.iloc[-1]["entry_id"]
+        update_growth_for_measurement(latest_entry_id, growth)
 
 # --- Sidebar: Buttons und Filterformular ---
 with st.sidebar:
@@ -338,8 +358,6 @@ if cum_df.empty:
     st.write("Keine Daten für die Top 10 verfügbar.")
     top10 = pd.DataFrame()
 else:
-    # Top 10 werden ausgewählt, indem das kumulative Wachstum (prozentuale Veränderung vom ersten zum letzten Messwert) berechnet
-    # und die Songs absteigend sortiert werden; die ersten 10 werden angezeigt.
     top10 = cum_df.sort_values("cumulative_growth", ascending=False).head(10)
 
 num_columns = 5
@@ -351,9 +369,9 @@ for row_df in rows:
         if row["spotify_track_id"]:
             cover_url, spotify_link = get_spotify_data(row["spotify_track_id"])
         with cols[idx]:
-            # Songtitel wird ohne Link ausgegeben
+            # Songtitel als reiner Text
             st.markdown(f"{row['track_name']}", unsafe_allow_html=True)
-            # Cover als klickbarer Link ins Spotify: Wird als HTML-Image eingebettet
+            # Cover als klickbarer Link zu Spotify
             if cover_url and spotify_link:
                 st.markdown(f'<a href="{spotify_link}" target="_blank"><img src="{cover_url}" style="width:100%;" /></a>', unsafe_allow_html=True)
             elif cover_url:
