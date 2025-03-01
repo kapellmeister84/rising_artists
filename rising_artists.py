@@ -76,7 +76,7 @@ def get_tracking_entries():
     """
     Holt Einträge aus der Tracking-Datenbank.
     Der Zeitstempel wird zuerst aus dem Property "Date created" entnommen,
-    falls nicht vorhanden, wird stattdessen der systemeigene "created_time" verwendet.
+    falls nicht vorhanden, wird der systemeigene "created_time" verwendet.
     """
     url = f"{notion_query_endpoint}/{tracking_db_id}/query"
     response = requests.post(url, headers=notion_headers)
@@ -87,9 +87,8 @@ def get_tracking_entries():
         entry_id = page.get("id")
         props = page.get("properties", {})
         pop = props.get("Popularity Score", {}).get("number")
-        # Versuche zuerst das Property "Date created"
+        # Versuche zuerst "Date created", sonst den systemeigenen created_time:
         date_str = props.get("Date created", {}).get("date", {}).get("start")
-        # Falls nicht vorhanden, nutze den systemeigenen created_time
         if not date_str:
             date_str = page.get("created_time")
         song_relations = props.get("Song", {}).get("relation", [])
@@ -156,121 +155,134 @@ def get_metadata_from_tracking_db():
         }
     return metadata
 
-# --- Platzhalterfunktionen für Buttons mit Fortschrittsbalken ---
-def get_new_music():
-    st.write("Rufe neue Musik aus Playlisten ab...")
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    song_list = ["Song A", "Song B", "Song C", "Song D", "Song E"]
-    for i, song in enumerate(song_list):
-        status_text.text(f"Rufe {song} ab...")
-        time.sleep(1)  # Simulation einer Verzögerung
-        progress_bar.progress((i + 1) / len(song_list))
-    st.success("Neue Musik wurde hinzugefügt!")
-    st.session_state.get_new_music_week = datetime.datetime.now().isocalendar()[1]
-    status_text.empty()
+# Zuerst Tracking-Daten laden und DataFrame erstellen
+tracking_entries = get_tracking_entries()
+metadata = get_metadata_from_tracking_db()
+df = pd.DataFrame(tracking_entries)
+if df.empty:
+    st.write("Keine Tracking-Daten gefunden.")
+    st.stop()
 
-def update_popularity():
-    st.write("Füge neue Popularity-Messung hinzu...")
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
-    songs_database_id = "1a9b6204cede8006b67fd247dc660ba4"  # Songs-Datenbank
-    week_database_id = "1a9b6204cede80e29338ede2c76999f2"    # Week-Datenbank
+df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.tz_localize(None)
+df["track_name"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("track_name", "Unbekannter Track"))
+df["artist"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("artist", "Unbekannt"))
+df["release_date"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("release_date", ""))
+df["spotify_track_id"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("spotify_track_id", ""))
+df["notion_track_id"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("notion_track_id", x))
+df_all = df[df["date"].notnull()]
 
-    def get_all_song_page_ids():
-        url = f"{notion_query_endpoint}/{songs_database_id}/query"
-        response = requests.post(url, headers=notion_headers)
-        response.raise_for_status()
-        data = response.json()
-        song_pages = []
-        for page in data.get("results", []):
-            page_id = page["id"]
-            popularity = 0
-            if "Popularity" in page["properties"]:
-                popularity = page["properties"]["Popularity"].get("number", 0)
-            song_pages.append({"page_id": page_id, "popularity": popularity})
-        return song_pages
-
-    def get_song_name(page_id):
-        url = f"{notion_page_endpoint}/{page_id}"
-        response = requests.get(url, headers=notion_headers)
-        response.raise_for_status()
-        data = response.json()
-        props = data.get("properties", {})
-        if "Name" in props and "title" in props["Name"]:
-            title_items = props["Name"].get("title", [])
-            song_name = "".join(item.get("plain_text", "") for item in title_items).strip()
-            if song_name:
-                return song_name
-        return page_id  # Fallback: Seiten-ID
-
-    def create_week_entry(song_page_id, popularity_score, track_id):
-        now_iso = datetime.datetime.now().isoformat()
-        payload = {
-            "parent": { "database_id": week_database_id },
-            "properties": {
-                "Name": { 
-                    "title": [
-                        { "text": { "content": f"Week of {now_iso[:10]}" } }
-                    ]
-                },
-                "Song": {
-                    "relation": [
-                        { "id": song_page_id }
-                    ]
-                },
-                "Popularity Score": {
-                    "number": popularity_score
-                },
-                "Date": {
-                    "date": { "start": now_iso }
-                },
-                "Notion Track ID": {
-                    "rich_text": [
-                        { "text": { "content": track_id } }
-                    ]
-                }
-            }
-        }
-        requests.post(notion_page_endpoint, headers=notion_headers, json=payload)
-
-    song_pages = get_all_song_page_ids()
-    total = len(song_pages)
-    song_to_track = {}
-    for idx, song in enumerate(song_pages):
-        page_id = song["page_id"]
-        song_name = get_song_name(page_id)
-        # Falls get_song_name den Seiten-ID zurückgibt, versuchen wir den gecachten Tracknamen
-        if song_name == page_id:
-            song_name = get_track_name_from_page(page_id)
-        status_text.text(f"Verarbeite Song: {song_name}")
-        if not song_name:
-            continue
-        if page_id not in song_to_track:
-            track_id = get_track_id_from_page(page_id)
-            if not track_id:
-                track_id = str(uuid.uuid4())
-            song_to_track[page_id] = track_id
-        else:
-            track_id = song_to_track[page_id]
-        create_week_entry(page_id, song["popularity"], track_id)
-        progress_bar.progress(int((idx + 1) / total * 100))
-    status_text.text("Alle Songs verarbeitet.")
-    st.success("Popularity wurde aktualisiert!")
-    status_text.empty()
+# Dynamisch den Popularity-Bereich bestimmen
+pop_min = int(df_all["popularity"].min()) if not df_all.empty else 0
+pop_max = int(df_all["popularity"].max()) if not df_all.empty else 100
 
 # --- Sidebar: Buttons und Filterformular ---
 with st.sidebar:
     st.markdown("## Automatische Updates")
     if st.button("Get New Music"):
+        def get_new_music():
+            st.write("Rufe neue Musik aus Playlisten ab...")
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            song_list = ["Song A", "Song B", "Song C", "Song D", "Song E"]
+            for i, song in enumerate(song_list):
+                status_text.text(f"Rufe {song} ab...")
+                time.sleep(1)
+                progress_bar.progress((i + 1) / len(song_list))
+            st.success("Neue Musik wurde hinzugefügt!")
+            st.session_state.get_new_music_week = datetime.datetime.now().isocalendar()[1]
+            status_text.empty()
         get_new_music()
     if st.button("Update Popularity"):
+        def update_popularity():
+            st.write("Füge neue Popularity-Messung hinzu...")
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            songs_database_id = "1a9b6204cede8006b67fd247dc660ba4"
+            week_database_id = "1a9b6204cede80e29338ede2c76999f2"
+            
+            def get_all_song_page_ids():
+                url = f"{notion_query_endpoint}/{songs_database_id}/query"
+                response = requests.post(url, headers=notion_headers)
+                response.raise_for_status()
+                data = response.json()
+                song_pages = []
+                for page in data.get("results", []):
+                    page_id = page["id"]
+                    popularity = 0
+                    if "Popularity" in page["properties"]:
+                        popularity = page["properties"]["Popularity"].get("number", 0)
+                    song_pages.append({"page_id": page_id, "popularity": popularity})
+                return song_pages
+            
+            def get_song_name(page_id):
+                url = f"{notion_page_endpoint}/{page_id}"
+                response = requests.get(url, headers=notion_headers)
+                response.raise_for_status()
+                data = response.json()
+                props = data.get("properties", {})
+                if "Name" in props and "title" in props["Name"]:
+                    title_items = props["Name"].get("title", [])
+                    song_name = "".join(item.get("plain_text", "") for item in title_items).strip()
+                    if song_name:
+                        return song_name
+                return page_id
+            
+            def create_week_entry(song_page_id, popularity_score, track_id):
+                now_iso = datetime.datetime.now().isoformat()
+                payload = {
+                    "parent": { "database_id": week_database_id },
+                    "properties": {
+                        "Name": { 
+                            "title": [
+                                { "text": { "content": f"Week of {now_iso[:10]}" } }
+                            ]
+                        },
+                        "Song": {
+                            "relation": [
+                                { "id": song_page_id }
+                            ]
+                        },
+                        "Popularity Score": {
+                            "number": popularity_score
+                        },
+                        "Date": {
+                            "date": { "start": now_iso }
+                        },
+                        "Notion Track ID": {
+                            "rich_text": [
+                                { "text": { "content": track_id } }
+                            ]
+                        }
+                    }
+                }
+                requests.post(notion_page_endpoint, headers=notion_headers, json=payload)
+            
+            song_pages = get_all_song_page_ids()
+            total = len(song_pages)
+            song_to_track = {}
+            for idx, song in enumerate(song_pages):
+                page_id = song["page_id"]
+                song_name = get_song_name(page_id)
+                if song_name == page_id:
+                    song_name = get_track_name_from_page(page_id)
+                status_text.text(f"Verarbeite Song: {song_name}")
+                if not song_name:
+                    continue
+                if page_id not in song_to_track:
+                    track_id = get_track_id_from_page(page_id)
+                    if not track_id:
+                        track_id = str(uuid.uuid4())
+                    song_to_track[page_id] = track_id
+                else:
+                    track_id = song_to_track[page_id]
+                create_week_entry(page_id, song["popularity"], track_id)
+                progress_bar.progress(int((idx + 1) / total * 100))
+            status_text.text("Alle Songs verarbeitet.")
+            st.success("Popularity wurde aktualisiert!")
+            status_text.empty()
         update_popularity()
     st.markdown("---")
-    # Dynamisch den Popularity-Bereich bestimmen
-    pop_min = int(df["popularity"].min()) if not df.empty else 0
-    pop_max = int(df["popularity"].max()) if not df.empty else 100
     filter_pop_range = st.slider("Popularity Range (letzter Messwert)", pop_min, pop_max, (pop_min, pop_max), step=1, key="filter_pop")
     filter_growth_threshold = st.number_input("Min. Growth % (zwischen den letzten beiden Messungen)", min_value=0.0, value=0.0, step=0.5, key="filter_growth")
     filter_sort_option = st.selectbox("Sortiere nach", ["Popularity", "Release Date"], key="filter_sort")
@@ -284,7 +296,6 @@ st.title("Song Tracking Übersicht")
 # 1. Oben: Top 10 Songs – Wachstum über alle Messungen
 st.header("Top 10 Songs – Wachstum über alle Messungen")
 
-# Wir haben bereits df_all und metadata global erstellt
 cumulative = []
 for song_id, group in df_all.groupby("song_id"):
     group = group.sort_values("date")
