@@ -71,7 +71,7 @@ def update_growth_for_measurement(entry_id, growth):
     response.raise_for_status()
 
 def get_tracking_entries():
-    # Kein Caching, da Popularity stets aktuell bleiben soll.
+    """Popularity muss aktuell sein, daher kein Caching."""
     url = f"{notion_query_endpoint}/{tracking_db_id}/query"
     response = requests.post(url, headers=notion_headers)
     response.raise_for_status()
@@ -90,6 +90,7 @@ def get_tracking_entries():
 
 @st.cache_data(show_spinner=False)
 def get_spotify_data(spotify_track_id):
+    """Liefert Cover und Spotify-Link (gecacht)."""
     url = f"https://api.spotify.com/v1/tracks/{spotify_track_id}"
     response = requests.get(url, headers={"Authorization": f"Bearer {SPOTIFY_TOKEN}"})
     if response.status_code == 200:
@@ -103,6 +104,7 @@ def get_spotify_data(spotify_track_id):
 
 @st.cache_data(show_spinner=False)
 def get_metadata_from_tracking_db():
+    """Artist, Release Date, Track ID etc. (gecacht)."""
     url = f"{notion_query_endpoint}/{tracking_db_id}/query"
     response = requests.post(url, headers=notion_headers)
     response.raise_for_status()
@@ -141,10 +143,10 @@ def get_metadata_from_tracking_db():
         }
     return metadata
 
-# --- Haupt-App ---
+# === Haupt-App ===
 st.title("Song Tracking Übersicht")
 
-# 1. Oben: Top 10 Songs mit größtem kumulativem Wachstum über 2 Tage (Gallery)
+# 1. Oben: Top 10 Songs mit größtem kumulativem Wachstum über 2 Tage
 st.header("Top 10 Songs – Wachstum über 2 Tage")
 
 tracking_entries = get_tracking_entries()
@@ -186,60 +188,37 @@ for song_id, group in df_2days.groupby("song_id"):
 cum_df = pd.DataFrame(cumulative)
 top10 = cum_df.sort_values("cumulative_growth", ascending=False).head(10)
 
-# Erzeuge ein Grid (5 Spalten) via HTML für die Top 10
-custom_css = """
-<style>
-.song-grid {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 1rem;
-}
-.song-card {
-  text-align: center;
-  border: 1px solid #ddd;
-  border-radius: 5px;
-  padding: 0.5rem;
-  height: 320px;
-  box-sizing: border-box;
-}
-.song-card img {
-  width: 100%;
-  height: auto;
-  max-height: 200px;
-  object-fit: cover;
-}
-.song-info {
-  margin-top: 0.5rem;
-  font-size: 0.9rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-</style>
-"""
-st.markdown(custom_css, unsafe_allow_html=True)
+# Wir erstellen 5 Spalten (für 5 Karten in einer Zeile)
+cols = st.columns(5)
 
-cards_html = ['<div class="song-grid">']
-for _, row in top10.iterrows():
-    cover_url, spotify_link = ("", "")
-    if row["spotify_track_id"]:
-        cover_url, spotify_link = get_spotify_data(row["spotify_track_id"])
-    card = f"""
-    <div class="song-card">
-      <img src="{cover_url}" alt="Cover">
-      <div class="song-info">
-        <strong>{row['track_name'][:40]}{'...' if len(row['track_name'])>40 else ''}</strong><br>
-        <em>{row['artist'][:40]}{'...' if len(row['artist'])>40 else ''}</em><br>
-        Release: {row['release_date']}<br>
-        Popularity: {row['last_popularity']:.1f}<br>
-        Growth: {row['cumulative_growth']:.1f}%<br>
-        {'<a href="'+spotify_link+'" target="_blank">Spotify Link</a>' if spotify_link else ''}
-      </div>
-    </div>
-    """
-    cards_html.append(card)
-cards_html.append("</div>")
-st.markdown("".join(cards_html), unsafe_allow_html=True)
+for idx, row in top10.iterrows():
+    with cols[idx % 5]:
+        cover_url, spotify_link = "", ""
+        if row["spotify_track_id"]:
+            cover_url, spotify_link = get_spotify_data(row["spotify_track_id"])
+        
+        # Bild
+        if cover_url:
+            st.image(cover_url, use_container_width=True)
+        else:
+            st.write("Kein Cover")
+        
+        # Titel und Artist auf eine Zeile beschränken
+        title = row["track_name"]
+        if len(title) > 40:
+            title = title[:40] + "..."
+        
+        artist_name = row["artist"]
+        if len(artist_name) > 40:
+            artist_name = artist_name[:40] + "..."
+        
+        st.markdown(f"<div style='text-align: center; font-weight: bold;'>{title}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='text-align: center; font-style: italic;'>{artist_name}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='text-align: center;'>Release: {row['release_date']}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='text-align: center;'>Popularity: {row['last_popularity']:.1f}</div>", unsafe_allow_html=True)
+        if spotify_link:
+            st.markdown(f"<div style='text-align: center;'><a href='{spotify_link}' target='_blank'>Spotify Link</a></div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='text-align: center; font-weight: bold;'>Growth: {row['cumulative_growth']:.1f}%</div>", unsafe_allow_html=True)
 
 # 2. Unterhalb: Ergebnisse erst anzeigen, wenn Filter gesetzt wurden
 st.header("Songs filtern")
