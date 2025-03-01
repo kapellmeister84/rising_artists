@@ -141,29 +141,7 @@ def get_metadata_from_tracking_db():
         }
     return metadata
 
-# --- Neue Funktionen für Scheduler-Buttons ---
-def get_new_music():
-    # Platzhalter: Hier kannst du deinen Code einbinden, um Songs aus Playlisten zu holen und in die Weeks-Datenbank einzutragen.
-    st.write("Neue Musik aus Playlisten wird abgerufen...")
-    # Hier sollte dein Code stehen...
-    st.success("Neue Musik wurde hinzugefügt.")
-
-def update_popularity():
-    # Platzhalter: Hier kannst du deinen Code einbinden, um eine neue Messung (Popularity) in die Weeks-Datenbank zu schreiben.
-    st.write("Aktualisiere Popularity in der Weeks-Datenbank...")
-    # Hier sollte dein Code stehen...
-    st.success("Popularity wurde aktualisiert.")
-
-# --- Sidebar Buttons ---
-st.sidebar.markdown("## Automatische Updates")
-if st.sidebar.button("Get New Music"):
-    get_new_music()
-
-if st.sidebar.button("Update Popularity"):
-    update_popularity()
-
-# === Haupt-App ===
-
+# --- Haupt-App ---
 st.title("Song Tracking Übersicht")
 
 # 1. Oben: Top 10 Songs mit größtem kumulativem Wachstum über 2 Tage (Gallery)
@@ -208,7 +186,7 @@ for song_id, group in df_2days.groupby("song_id"):
 cum_df = pd.DataFrame(cumulative)
 top10 = cum_df.sort_values("cumulative_growth", ascending=False).head(10)
 
-# Feste 5-Spalten-Galerie via HTML
+# Erzeuge ein Grid (5 Spalten) via HTML für die Top 10
 custom_css = """
 <style>
 .song-grid {
