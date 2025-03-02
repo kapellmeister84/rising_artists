@@ -7,15 +7,11 @@ import pandas as pd
 import plotly.express as px
 from concurrent.futures import ThreadPoolExecutor
 import uuid
-import streamlit as st
 from utils import set_background, set_dark_mode
-
-
 
 st.set_page_config(layout="wide")
 set_dark_mode()
 set_background("https://wallpapershome.com/images/pages/pic_h/26334.jpg")
-
 
 # === Notion-Konfiguration ===
 tracking_db_id = "1a9b6204cede80e29338ede2c76999f2"  # Tracking-Datenbank (enthält Rollups für "Artist" und "Release Date", Relation "Song")
@@ -79,7 +75,9 @@ def update_growth_for_measurement(entry_id, growth):
 @st.cache_data(show_spinner=False)
 def get_all_tracking_pages():
     url = f"{notion_query_endpoint}/{tracking_db_id}/query"
-    payload = {}
+    payload = {
+        "page_size": 100  # Hier wird die maximale Anzahl der Ergebnisse pro Anfrage gesetzt
+    }
     pages = []
     has_more = True
     start_cursor = None
@@ -271,12 +269,9 @@ def update_popularity():
     st.success("Popularity wurde aktualisiert!")
     status_text.empty()
     
-    # Growth-Berechnung: Für jeden Song werden die beiden neuesten Messwerte verglichen und der Growth-Wert
-    # wird in den neuesten Eintrag geschrieben.
     st.write("Berechne Growth für jeden Song...")
-    # Cache leeren, um die aktuellsten Daten zu erhalten:
-    get_all_tracking_pages.clear()
-    get_tracking_entries.clear()
+    st.cache_data.clear(get_all_tracking_pages)
+    st.cache_data.clear(get_tracking_entries)
     updated_entries = get_tracking_entries()
     df_update = pd.DataFrame(updated_entries)
     df_update["date"] = pd.to_datetime(df_update["date"], errors="coerce")
@@ -301,8 +296,8 @@ with st.sidebar:
     if st.button("Update Popularity"):
         update_popularity()
     if st.button("Refresh Daten"):
-        get_all_tracking_pages.clear()
-        get_tracking_entries.clear()
+        st.cache_data.clear(get_all_tracking_pages)
+        st.cache_data.clear(get_tracking_entries)
         st.experimental_rerun()
     st.markdown("---")
     with st.form("filter_form"):
@@ -317,7 +312,6 @@ with st.sidebar:
 
 st.title("ARTIST SCOUT 1.0b")
 
-# 1. Oben: Top 10 Songs – Wachstum über alle Messungen
 st.header("Top 10 songs to watch")
 
 tracking_entries = get_tracking_entries()
@@ -387,8 +381,11 @@ for row_df in rows:
             show_graph = st.checkbox("Graph anzeigen / ausblenden", key=f"toggle_{row['song_id']}")
             if show_graph:
                 with st.spinner("Graph wird geladen..."):
-                    get_all_tracking_pages.clear()
-                    get_tracking_entries.clear()
+                    try:
+                        st.cache_data.clear(get_all_tracking_pages)
+                        st.cache_data.clear(get_tracking_entries)
+                    except Exception as e:
+                        st.write("Fehler beim Leeren des Caches:", e)
                     updated_entries = get_tracking_entries()
                     df_new = pd.DataFrame(updated_entries)
                     df_new["date"] = pd.to_datetime(df_new["date"], errors="coerce").dt.tz_localize(None)
@@ -405,7 +402,6 @@ for row_df in rows:
                     fig.update_yaxes(range=[0, 100])
                     st.plotly_chart(fig, use_container_width=True, key=f"chart_{row['song_id']}_{time.time()}")
                     
-# 2. Unterhalb: Filterergebnisse
 st.header("Songs filtern")
 if submitted:
     last_data = []
