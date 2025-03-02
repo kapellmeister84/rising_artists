@@ -254,7 +254,7 @@ def create_measurement_entry(song, details):
         "parent": {"database_id": measurements_db_id},
         "properties": {
             "Name": {"title": [{"text": {"content": f"Measurement {now}"}}]},
-            "date created": {"date": {"start": now}},  # Property angepasst: "date created"
+            "Date created": {"date": {"start": now}},  # Property angepasst: "date created"
             "Song": {"relation": [{"id": song["page_id"]}]},
             "Song Pop": {"number": int(details.get("song_pop") or 0)},
             "Artist Pop": {"number": int(details.get("artist_pop") or 0)},
