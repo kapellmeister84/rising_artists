@@ -6,10 +6,6 @@ import streamlit as st
 import requests, json, time, hashlib
 from datetime import datetime
 
-# Accessing secrets (Notion token, Database ID, etc.)
-NOTION_TOKEN = st.secrets["NOTION_TOKEN"]
-DATABASE_ID = st.secrets["DATABASE_ID"]
-NOTION_VERSION = st.secrets["NOTION_VERSION"] if "NOTION_VERSION" in st.secrets else "2022-06-28"
 
 st.set_page_config(page_title="playlist scanner", layout="wide", initial_sidebar_state="expanded")
 
@@ -23,79 +19,6 @@ if params.get("logged_in") == ["1"] and params.get("user_email"):
     st.session_state.user_email = params.get("user_email")[0]
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
-
-def hash_password(password):
-    return hashlib.sha256(password.encode()).hexdigest()
-
-def get_user_data(email):
-    url = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
-    headers = {
-        "Authorization": f"Bearer {NOTION_TOKEN}",
-        "Notion-Version": NOTION_VERSION,
-        "Content-Type": "application/json"
-    }
-    payload = {"filter": {"property": "Email", "title": {"equals": email}}}
-    response = requests.post(url, headers=headers, data=json.dumps(payload))
-    data = response.json()
-    results = data.get("results", [])
-    return results[0] if results else None
-
-def check_user_login(email, password):
-    user_page = get_user_data(email)
-    if not user_page:
-        return False
-    stored_hash = user_page.get("properties", {}).get("Password", {}).get("rich_text", [{}])[0].get("text", {}).get("content", "")
-    return stored_hash == hash_password(password)
-
-# --- Sidebar: Login always visible and adjust title ---
-st.sidebar.title("Login")
-with st.sidebar.form("login_form"):
-    email = st.text_input("Email", placeholder="user@example.com", value=st.session_state.get("user_email", ""))
-    password = st.text_input("Password", type="password")
-    remember = st.checkbox("Keep me logged in")
-    login_submit = st.form_submit_button("Login")
-if login_submit:
-    if not email or "@" not in email or not password:
-        st.sidebar.error("Please fill in all fields correctly.")
-    else:
-        if check_user_login(email, password):
-            st.session_state.logged_in = True
-            st.session_state.user_email = email
-            st.sidebar.success("Logged in successfully!")
-            if remember:
-                st.query_params = {"logged_in": "1", "user_email": email}
-        else:
-            st.sidebar.error("Login failed. Check your details.")
-
-if st.sidebar.button("Logout"):
-    st.session_state.logged_in = False
-    st.session_state.user_email = ""
-    st.query_params = {}
-    st.sidebar.info("Logged out.")
-
-st.markdown(
-    """
-    <script>
-      // Set autocomplete attribute for password fields to 'current-password'
-      document.addEventListener('DOMContentLoaded', function(){
-        var pwdInputs = document.querySelectorAll('input[type="password"]');
-        for (var i = 0; i < pwdInputs.length; i++){
-            pwdInputs[i].setAttribute('autocomplete', 'current-password');
-        }
-        const input = document.querySelector('input[type="text"]');
-        const btn = document.querySelector('button[type="submit"]');
-        if(input && btn) {
-          input.addEventListener('keydown', function(e){
-            if(e.key === 'Enter'){
-              e.preventDefault();
-              btn.click();
-            }
-          });
-        }
-      });
-    </script>
-    """, unsafe_allow_html=True
-)
 
 st.title("playlist scanner")
 st.markdown("<h4 style='text-align: left;'>created by <a href='https://www.instagram.com/capelli.mp3/' target='_blank'>capelli.mp3</a></h4>", unsafe_allow_html=True)
