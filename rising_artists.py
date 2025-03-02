@@ -71,7 +71,6 @@ def update_growth_for_measurement(entry_id, growth):
 
 @st.cache_data(show_spinner=False)
 def get_all_tracking_pages():
-    """Lädt per Pagination alle Seiten aus der Tracking-Datenbank (cached)."""
     url = f"{notion_query_endpoint}/{tracking_db_id}/query"
     payload = {}
     pages = []
@@ -90,13 +89,6 @@ def get_all_tracking_pages():
 
 @st.cache_data(show_spinner=False)
 def get_tracking_entries():
-    """
-    Extrahiert aus allen Seiten der Tracking-Datenbank (cached):
-      - Popularity Score,
-      - Zeitstempel aus dem Property "Date",
-      - die Song-ID aus der Relation "Song",
-      - Growth (sofern vorhanden).
-    """
     pages = get_all_tracking_pages()
     entries = []
     for page in pages:
@@ -104,7 +96,7 @@ def get_tracking_entries():
         props = page.get("properties", {})
         pop = props.get("Popularity Score", {}).get("number")
         date_str = props.get("Date", {}).get("date", {}).get("start")
-        growth = props.get("Growth", {}).get("number")  # kann None sein
+        growth = props.get("Growth", {}).get("number")
         song_relations = props.get("Song", {}).get("relation", [])
         for relation in song_relations:
             song_id = relation.get("id")
@@ -119,7 +111,6 @@ def get_tracking_entries():
 
 @st.cache_data(show_spinner=False)
 def get_spotify_data(spotify_track_id):
-    """Liefert Cover und Spotify-Link (gecacht)."""
     url = f"https://api.spotify.com/v1/tracks/{spotify_track_id}"
     response = requests.get(url, headers={"Authorization": f"Bearer {SPOTIFY_TOKEN}"})
     if response.status_code == 200:
@@ -133,11 +124,6 @@ def get_spotify_data(spotify_track_id):
 
 @st.cache_data(show_spinner=False)
 def get_metadata_from_tracking_db():
-    """
-    Extrahiert aus allen Seiten der Tracking-Datenbank (cached):
-      - Den Trackname, Artist, Release Date,
-      - die Spotify Track ID aus dem Property "Track ID".
-    """
     pages = get_all_tracking_pages()
     metadata = {}
     with ThreadPoolExecutor() as executor:
@@ -278,7 +264,8 @@ def update_popularity():
     st.success("Popularity wurde aktualisiert!")
     status_text.empty()
     
-    # Growth-Berechnung: Für jeden Song werden die beiden neuesten Messwerte verglichen
+    # Growth-Berechnung: Für jeden Song werden die beiden neuesten Messwerte verglichen und der Growth-Wert
+    # wird in den neuesten Eintrag geschrieben.
     st.write("Berechne Growth für jeden Song...")
     # Cache leeren, um die aktuellsten Daten zu erhalten:
     get_all_tracking_pages.clear()
@@ -307,10 +294,9 @@ with st.sidebar:
     if st.button("Update Popularity"):
         update_popularity()
     if st.button("Refresh Daten"):
-        # Cache leeren
         get_all_tracking_pages.clear()
         get_tracking_entries.clear()
-        st.write("Daten wurden aktualisiert. Bitte lade die Seite neu.")
+        st.experimental_rerun()
     st.markdown("---")
     with st.form("filter_form"):
         search_query = st.text_input("Song/Artist Suche", "")
@@ -325,7 +311,7 @@ with st.sidebar:
 st.title("Song Tracking Übersicht")
 
 # 1. Oben: Top 10 Songs – Wachstum über alle Messungen
-st.header("Top 10 Songs – Wachstum über alle Messungen")
+st.header("Top 10 songs to watch")
 
 tracking_entries = get_tracking_entries()
 metadata = get_metadata_from_tracking_db()
@@ -347,7 +333,6 @@ for song_id, group in df_all.groupby("song_id"):
     if group.empty:
         continue
     last_pop = group.iloc[-1]["popularity"]
-    # Verwende den Growth-Wert des letzten Eintrags, falls vorhanden, sonst kumulativ berechnen
     last_growth = group.iloc[-1].get("growth")
     if last_growth is None:
         first_pop = group.iloc[0]["popularity"]
@@ -370,7 +355,6 @@ if cum_df.empty:
     st.write("Keine Daten für die Top 10 verfügbar.")
     top10 = pd.DataFrame()
 else:
-    # Nur Songs mit Growth > 0 werden berücksichtigt, und die 10 mit den höchsten Growth-Werten ausgewählt
     top10 = cum_df[cum_df["cumulative_growth"] > 0].sort_values("cumulative_growth", ascending=False).head(10)
 
 num_columns = 5
@@ -396,7 +380,6 @@ for row_df in rows:
             show_graph = st.checkbox("Graph anzeigen / ausblenden", key=f"toggle_{row['song_id']}")
             if show_graph:
                 with st.spinner("Graph wird geladen..."):
-                    # Cache leeren und aktuelle Daten laden, wenn der Graph aufgeklappt wird
                     get_all_tracking_pages.clear()
                     get_tracking_entries.clear()
                     updated_entries = get_tracking_entries()
