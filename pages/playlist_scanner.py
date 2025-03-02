@@ -276,7 +276,7 @@ def update_popularity():
         }
         requests.post(notion_page_endpoint, headers=notion_headers, json=payload)
 
-    # Alle Song-Seiten abrufen (mit Pagination)
+    # Alle Song-Seiten (mit Pagination) abrufen:
     song_pages = get_all_song_page_ids()
     total = len(song_pages)
     song_to_track = {}
