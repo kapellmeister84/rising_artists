@@ -335,5 +335,3 @@ if results:
                     st.markdown(playlist_html, unsafe_allow_html=True)
 else:
             st.warning(f"I'm sorry, {search_term} couldn't be found. 😔")
-else:
-    st.warning("Please log in to use the scanner.")
