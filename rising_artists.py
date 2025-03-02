@@ -114,16 +114,14 @@ def get_songs_metadata():
             if "Country Code" in props and props["Country Code"].get("rich_text"):
                 country_code = "".join([t.get("plain_text", "") for t in props["Country Code"]["rich_text"]]).strip()
 
-            # Measurements Relation
+            # Measurements: Relation Property
             measurements_ids = []
             if "Measurements" in props and props["Measurements"].get("relation"):
                 for rel in props["Measurements"]["relation"]:
                     m_id = rel.get("id")
                     if m_id:
                         measurements_ids.append(m_id)
-                        # Starte parallel die Abfrage der Measurement-Details
                         measurement_futures[m_id] = executor.submit(get_measurement_details, m_id)
-
             key = track_id if track_id else page.get("id")
             metadata[key] = {
                 "page_id": page.get("id"),
@@ -135,22 +133,29 @@ def get_songs_metadata():
                 "country_code": country_code,
                 "measurements_ids": measurements_ids
             }
-
-        # Füge die Measurement-Details hinzu
+        # Ergänze die Measurement-Details
         for measurement_id, future in measurement_futures.items():
             try:
                 details = future.result()
             except Exception as e:
                 details = {"song_pop": None, "artist_pop": None, "streams": None, "monthly_listeners": None, "artist_followers": None}
-            # Suche alle Songs, die diese Measurement-ID besitzen und ergänze die Daten
             for key, song_data in metadata.items():
                 if measurement_id in song_data.get("measurements_ids", []):
                     if "measurements" not in song_data:
                         song_data["measurements"] = []
-                    song_data["measurements"].append({ "id": measurement_id, **details })
+                    song_data["measurements"].append({"id": measurement_id, **details})
     return metadata
 
-# Laden der Songs-Metadaten inklusive Measurements aus der Notion-Songs-Datenbank
+#########################
+# UI – Button "Get New Music"
+#########################
+st.sidebar.title("Songs Cache")
+if st.sidebar.button("Get New Music"):
+    # Lösche den Cache und lade die Daten neu
+    get_songs_metadata.clear()
+    st.experimental_rerun()
+
+# Lade die Songs-Metadaten inklusive Measurements aus der Notion-Songs-Datenbank
 songs_metadata = get_songs_metadata()
 st.title("Songs Metadata from Notion (with Measurements)")
 st.write("Loaded songs metadata:")
