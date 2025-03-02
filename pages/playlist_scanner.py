@@ -251,9 +251,9 @@ if submit and search_term:
             time.sleep(0.1)
         
     
-    status_message.empty()
-    progress_placeholder.empty()
-    promo_placeholder.empty()
+status_message.empty()
+progress_placeholder.empty()
+promo_placeholder.empty()
         
         if results:
             song_count = len(results)
