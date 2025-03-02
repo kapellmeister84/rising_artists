@@ -15,10 +15,13 @@ st.set_page_config(layout="wide")
 set_dark_mode()
 set_background("https://wallpapershome.com/images/pages/pic_h/26334.jpg")
 
-# Log-Platzhalter einrichten
-log_placeholder = st.empty()
+# Session-State initialisieren
 if "log_messages" not in st.session_state:
-    st.session_state.log_messages = []
+    st.session_state["log_messages"] = []
+
+# Log in der Sidebar anzeigen
+with st.sidebar.expander("Log-Details", expanded=True):
+    log_placeholder = st.empty()
 
 def log(msg):
     timestamp = datetime.datetime.now().strftime('%H:%M:%S')
@@ -175,14 +178,14 @@ def get_metadata_from_tracking_db():
             payload["start_cursor"] = start_cursor
         try:
             response = requests.post(url, headers=notion_headers, json=payload)
-            response.raise_for_status()
-        except requests.exceptions.HTTPError as e:
             if response.status_code == 429:
                 log("Notion Rate Limit erreicht, warte 5 Sekunden...")
                 time.sleep(5)
                 continue
-            else:
-                raise
+            response.raise_for_status()
+        except requests.exceptions.HTTPError as e:
+            log(f"HTTPError beim Laden von Notion-Metadaten: {e}")
+            raise
         data = response.json()
         pages.extend(data.get("results", []))
         has_more = data.get("has_more", False)
@@ -486,15 +489,6 @@ with st.sidebar:
         search_query = st.text_input("Song/Artist Suche", "")
         filter_pop_range = st.slider("Popularity Range (letzter Messwert)", 0, 100, (0, 100), step=1, key="filter_pop")
         submitted = st.form_submit_button("Filter anwenden")
-    # Log-Platzhalter in der Seitenleiste
-    with st.sidebar.expander("Log-Details", expanded=True):
-        log_placeholder = st.empty()
-
-    def log(msg):
-        timestamp = datetime.datetime.now().strftime('%H:%M:%S')
-        st.session_state.log_messages.append(f"{timestamp} - {msg}")
-        # Aktualisiere den Log-Bereich als scrollbares Textfeld
-        log_placeholder.text("\n".join(st.session_state.log_messages))
 
 if "tracking_entries" in st.session_state:
     tracking_entries = st.session_state.tracking_entries
