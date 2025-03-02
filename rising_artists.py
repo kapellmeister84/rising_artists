@@ -200,7 +200,6 @@ def get_new_music():
     st.session_state.get_new_music_week = datetime.datetime.now().isocalendar()[1]
     status_text.empty()
 
-# Funktion zum Abrufen aller Song-Seiten aus der Songs-Datenbank (mit Pagination)
 def get_all_song_page_ids():
     url = f"{notion_query_endpoint}/{songs_database_id}/query"
     payload = {"page_size": 100}
@@ -252,7 +251,7 @@ def update_popularity():
         payload = {
             "parent": { "database_id": week_database_id },
             "properties": {
-                "Name": { 
+                "Name": {
                     "title": [
                         { "text": { "content": f"Week of {now_iso[:10]}" } }
                     ]
@@ -303,7 +302,7 @@ def update_popularity():
     status_text.empty()
     
     st.write("Berechne Growth für jeden Song...")
-    # Cache leeren – direkter Aufruf der clear()-Methoden:
+    # Cache leeren
     get_all_tracking_pages.clear()
     get_tracking_entries.clear()
     updated_entries = get_tracking_entries()
@@ -316,10 +315,12 @@ def update_popularity():
             prev = group.iloc[-2]["popularity"]
             curr = group.iloc[-1]["popularity"]
             growth = ((curr - prev) / prev) * 100 if prev and prev != 0 else 0
+            comparison = f"(Vergleich: {prev} -> {curr})"
         else:
             growth = 0
+            comparison = "(keine Vergleichsdaten)"
         latest_entry_id = group.iloc[-1]["entry_id"]
-        st.write(f"Song {song_id}: Growth = {growth:.1f}% (Vergleich: {prev} -> {curr})")
+        st.write(f"Song {song_id}: Growth = {growth:.1f}% {comparison}")
         update_growth_for_measurement(latest_entry_id, growth)
     
     st.write("Aktualisiere Streams für jeden Song...")
@@ -346,7 +347,6 @@ def update_popularity():
         st.write(f"Song {song_id}: Streams = {streams}")
         update_streams_for_measurement(latest_entry_id, streams)
 
-# --- Neue Funktion: Streams von Spotify abrufen ---
 def get_spotify_playcount(track_id, token):
     variables = json.dumps({"uri": f"spotify:track:{track_id}"})
     extensions = json.dumps({
