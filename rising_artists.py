@@ -47,13 +47,14 @@ def get_spotify_token():
 def get_web_spotify_token():
     """
     Get a Spotify access token from the web player endpoint.
+    Dieser Token wird für den Abruf des Playcounts genutzt.
     """
     response = requests.get("https://open.spotify.com/get_access_token?reason=transport&productType=web_player").json()
     return response["accessToken"]
 
-# Global tokens und Headers
+# Global: Wir holen den Web-Player-Token und speichern ihn in SPOTIFY_HEADERS
+# – so funktioniert es in deinem funktionierenden Scanner-Script.
 SPOTIFY_TOKEN = get_spotify_token()
-# Wir verwenden für den Partner-API-Call den Web-Player-Token, der in SPOTIFY_HEADERS gespeichert wird:
 SPOTIFY_HEADERS = {"Authorization": f"Bearer {get_web_spotify_token()}"}
 
 #########################
@@ -106,7 +107,7 @@ def get_playlist_songs(playlist_id, token):
             available_markets = track.get("album", {}).get("available_markets", [])
             country_code = available_markets[0] if available_markets else ""
             artist_pop = get_artist_popularity(artist_id, token) if artist_id else 0
-            streams = 0  # wird später aktualisiert
+            streams = 0  # wird später über get_spotify_playcount aktualisiert
             songs.append({
                 "song_name": song_name,
                 "artist_name": artist_name,
@@ -228,7 +229,7 @@ def update_measurement_entry(measurement_page_id, song_pop, artist_pop, streams,
 # Reliable Playcount & Extra Metrics
 #########################
 def get_spotify_playcount(track_id, token):
-    # Verwende exakt die Technik aus deinem "playlist scanner"-Script:
+    # Exakt wie im funktionierenden Scanner-Script:
     variables = json.dumps({"uri": f"spotify:track:{track_id}"})
     extensions = json.dumps({
         "persistedQuery": {
