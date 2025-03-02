@@ -14,7 +14,7 @@ set_background("https://wallpapershome.com/images/pages/pic_h/26334.jpg")
 #########################
 # Notion-Konfiguration  #
 #########################
-# Songs-Datenbank (song-database) und Measurements-Datenbank (measurements-database)
+# Songs-Datenbank und Measurements-Datenbank (als Relation in der Song-Datenbank)
 songs_database_id = st.secrets["notion"]["song-database"]
 measurements_db_id = st.secrets["notion"]["measurements-database"]
 notion_secret = st.secrets["notion"]["secret"]
@@ -67,32 +67,32 @@ def get_songs_metadata():
         for page in pages:
             props = page.get("properties", {})
 
-            # Track Name
+            # Track Name (title)
             track_name = ""
             if "Track Name" in props and props["Track Name"].get("title"):
                 track_name = "".join([t.get("plain_text", "") for t in props["Track Name"]["title"]]).strip()
 
-            # Artist Name
+            # Artist Name (rich_text)
             artist_name = ""
             if "Artist Name" in props and props["Artist Name"].get("rich_text"):
                 artist_name = "".join([t.get("plain_text", "") for t in props["Artist Name"]["rich_text"]]).strip()
 
-            # Artist ID
+            # Artist ID (rich_text)
             artist_id = ""
             if "Artist ID" in props and props["Artist ID"].get("rich_text"):
                 artist_id = "".join([t.get("plain_text", "") for t in props["Artist ID"]["rich_text"]]).strip()
 
-            # Track ID
+            # Track ID (rich_text)
             track_id = ""
             if "Track ID" in props and props["Track ID"].get("rich_text"):
                 track_id = "".join([t.get("plain_text", "") for t in props["Track ID"]["rich_text"]]).strip()
 
-            # Release Date
+            # Release Date (date)
             release_date = ""
             if "Release Date" in props and props["Release Date"].get("date"):
                 release_date = props["Release Date"]["date"].get("start", "")
 
-            # Country Code
+            # Country Code (rich_text)
             country_code = ""
             if "Country Code" in props and props["Country Code"].get("rich_text"):
                 country_code = "".join([t.get("plain_text", "") for t in props["Country Code"]["rich_text"]]).strip()
@@ -147,7 +147,7 @@ def get_spotify_token():
 
 SPOTIFY_TOKEN = get_spotify_token()
 
-# Für Playcount: Genau wie in deinem Scanner-Script
+# Für Playcount: Genau wie im Scanner-Script
 def get_spotify_playcount(track_id, token):
     variables = json.dumps({"uri": f"spotify:track:{track_id}"})
     extensions = json.dumps({
@@ -210,20 +210,22 @@ def update_song_data(song, token):
 def create_measurement_entry(song, details):
     """
     Legt einen neuen Measurement-Eintrag in der Measurements-Datenbank an.
-    Dieser Eintrag wird NICHT überschrieben, sondern ergänzt die History.
     Die Felder sind:
-      - Name: z.B. aktueller Zeitstempel als Text
+      - Name: aktueller Zeitstempel
+      - Song: Relation zum Song (über die Page-ID)
       - Song Pop, Artist Pop, Streams, Monthly Listeners, Artist Followers
+    (Für Monthly Listeners verwenden wir hier 0; kann bei Bedarf ergänzt werden.)
     """
     now = datetime.datetime.now().isoformat()
     payload = {
         "parent": {"database_id": measurements_db_id},
         "properties": {
             "Name": {"title": [{"text": {"content": f"Measurement {now}"}}]},
+            "Song": {"relation": [{"id": song["page_id"]}]},
             "Song Pop": {"number": details.get("song_pop", 0)},
             "Artist Pop": {"number": details.get("artist_pop", 0)},
             "Streams": {"number": details.get("streams", 0)},
-            "Monthly Listeners": {"number": 0},  # Falls benötigt, hier evtl. noch ergänzen
+            "Monthly Listeners": {"number": 0},
             "Artist Followers": {"number": details.get("artist_followers", 0)}
         }
     }
@@ -236,7 +238,6 @@ def update_song_measurements_relation(page_id, new_measurement_id):
     """
     Liest die bestehende Relation "Measurements" der Song-Seite aus und fügt die neue Measurement-ID hinzu.
     """
-    # Hole die aktuelle Seite
     url = f"{notion_page_endpoint}/{page_id}"
     response = requests.get(url, headers=notion_headers)
     response.raise_for_status()
@@ -245,10 +246,8 @@ def update_song_measurements_relation(page_id, new_measurement_id):
     current_relations = []
     if "Measurements" in props and props["Measurements"].get("relation"):
         current_relations = props["Measurements"]["relation"]
-    # Füge die neue Relation hinzu, wenn noch nicht vorhanden
     if not any(rel.get("id") == new_measurement_id for rel in current_relations):
         current_relations.append({"id": new_measurement_id})
-    # Aktualisiere die Seite
     payload = {
         "properties": {
             "Measurements": {"relation": current_relations}
@@ -258,18 +257,17 @@ def update_song_measurements_relation(page_id, new_measurement_id):
     patch_resp.raise_for_status()
 
 #########################
-# Neue Funktion: "Fill Song Details" – erstellt neue Measurement-Einträge
+# Neue Funktion: "Fill Song Details" – legt neue Measurement-Einträge an
 #########################
 def fill_song_measurements():
     spotify_token = get_spotify_token()
     messages = []
-    # Für jedes Lied aus dem Cache:
     for key, song in songs_metadata.items():
         if song.get("track_id"):
             details = update_song_data(song, spotify_token)
-            # Lege neuen Measurement-Eintrag an:
+            # Lege neuen Measurement-Eintrag in der Measurements-Datenbank an:
             new_meas_id = create_measurement_entry(song, details)
-            # Aktualisiere die Relation auf der Song-Seite (History erweitern)
+            # Füge diesen Measurement-Eintrag der Relation auf der Song-Seite hinzu (History erweitern)
             update_song_measurements_relation(song["page_id"], new_meas_id)
             messages.append(f"Neue Measurement für {song.get('track_name')} erstellt (ID: {new_meas_id})")
     return messages
@@ -284,8 +282,6 @@ measurements_db_id = st.secrets["notion"]["measurements-database"]
 #########################
 st.sidebar.title("Songs Cache")
 if st.sidebar.button("Get New Music"):
-    # Führe den "Get New Music"-Prozess aus (wie bisher)
-    # Hier verwenden wir deinen existierenden Code
     def run_get_new_music():
         spotify_token = get_spotify_token()
         st.write("Spotify Access Token:", spotify_token)
