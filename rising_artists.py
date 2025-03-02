@@ -36,28 +36,22 @@ def get_spotify_token():
     return response.json().get("accessToken")
 SPOTIFY_TOKEN = get_spotify_token()
 
-# --- Utils für Archivierung ---
-def archive_page(page_id):
-    """
-    Archiviert (löscht) eine Seite in Notion, indem sie auf archived=True gesetzt wird.
-    """
-    url = f"{notion_page_endpoint}/{page_id}"
-    payload = {"archived": True}
-    response = requests.patch(url, headers=notion_headers, json=payload)
-    response.raise_for_status()
-
+# --- Utility-Funktion zum Löschen alter Songs ---
 def cleanup_old_songs():
     """
-    Überprüft alle Tracking-Einträge und archiviert (löscht) alle Seiten,
-    bei denen ein Song seit mindestens 3 Wochen getrackt wird.
-    Für jeden Song wird das früheste Tracking-Datum ermittelt – wenn die Differenz
-    zur aktuellen Zeit >= 21 Tage beträgt, werden alle zugehörigen Tracking-Einträge
-    und die Song-Seite archiviert.
+    Überprüft alle Tracking-Einträge und archiviert (löscht) alle Songs,
+    die seit mindestens 3 Wochen getrackt werden.
+    Dabei wird das früheste Tracking-Datum eines Songs betrachtet und
+    falls die Differenz zur aktuellen Zeit >= 21 Tage beträgt, werden alle
+    zugehörigen Tracking-Einträge und die Song-Seite archiviert.
     """
-    st.write("Bereinige alte Songs ...")
-    # Cache leeren, um sicherzustellen, dass wir aktuelle Daten haben:
-    get_all_tracking_pages.clear()
-    get_tracking_entries.clear()
+    st.write("Bereinige alte Songs...")
+    # Cache leeren, falls vorhanden
+    if hasattr(get_all_tracking_pages, "clear"):
+        get_all_tracking_pages.clear()
+    if hasattr(get_tracking_entries, "clear"):
+        get_tracking_entries.clear()
+    
     entries = get_tracking_entries()
     if not entries:
         return
@@ -65,27 +59,48 @@ def cleanup_old_songs():
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
     df = df.dropna(subset=["date", "song_id"])
     now = datetime.datetime.now()
-    # Gruppieren nach Song-ID:
     for song_id, group in df.groupby("song_id"):
         min_date = group["date"].min()
         if (now - min_date).days >= 21:
-            st.write(f"Song {song_id} wird archiviert, da er seit { (now - min_date).days } Tagen getrackt wird.")
-            # Archiviert alle Tracking-Einträge für diesen Song:
+            st.write(f"Song {song_id} wird archiviert (getrackt seit {(now - min_date).days} Tagen).")
+            # Archivieren aller Tracking-Einträge dieses Songs
             for entry in group["entry_id"]:
                 try:
                     archive_page(entry)
                 except Exception as e:
                     st.write(f"Fehler beim Archivieren von Tracking-Eintrag {entry}: {e}")
-            # Archiviert auch die Song-Seite in der Songs-Datenbank:
+            # Archivieren der Song-Seite (in der Songs-Datenbank)
             try:
                 archive_page(song_id)
             except Exception as e:
                 st.write(f"Fehler beim Archivieren der Song-Seite {song_id}: {e}")
 
+def archive_page(page_id):
+    """
+    Archiviert eine Seite in Notion (setzt "archived": true).
+    """
+    url = f"{notion_page_endpoint}/{page_id}"
+    payload = {"archived": True}
+    response = requests.patch(url, headers=notion_headers, json=payload)
+    response.raise_for_status()
+
 # --- Rufe Cleanup beim Start auf ---
 cleanup_old_songs()
 
-# --- Weitere Hilfsfunktionen und Caching (wie bisher) ---
+# --- Hilfsfunktionen ---
+def parse_rollup_text(rollup):
+    texts = []
+    if rollup and "array" in rollup:
+        for item in rollup["array"]:
+            if item.get("type") == "rich_text":
+                for sub in item.get("rich_text", []):
+                    texts.append(sub.get("plain_text", ""))
+            elif item.get("type") == "date":
+                date_info = item.get("date", {})
+                if date_info.get("start"):
+                    texts.append(date_info["start"])
+    return " ".join(texts).strip()
+
 def get_track_name_from_page(page_id):
     url = f"{notion_page_endpoint}/{page_id}"
     response = requests.get(url, headers=notion_headers)
@@ -221,9 +236,8 @@ def update_popularity():
     progress_bar = st.progress(0)
     status_text = st.empty()
     
-    # IDs der Songs- und Week-Datenbanken
     songs_database_id = "1a9b6204cede8006b67fd247dc660ba4"
-    week_database_id = tracking_db_id  # Gleiche wie Tracking-Datenbank
+    week_database_id = tracking_db_id  # Wir nutzen hier die Tracking-Datenbank
 
     def get_all_song_page_ids():
         url = f"{notion_query_endpoint}/{songs_database_id}/query"
@@ -308,11 +322,14 @@ def update_popularity():
     st.success("Popularity wurde aktualisiert!")
     status_text.empty()
     
-    # Growth-Berechnung: Vergleiche die beiden neuesten Messwerte jedes Songs und update den Growth-Wert
+    # Growth-Berechnung: Für jeden Song werden die beiden neuesten Messwerte verglichen und der Growth-Wert
+    # wird in den neuesten Eintrag geschrieben.
     st.write("Berechne Growth für jeden Song...")
     # Cache leeren, um die aktuellsten Daten zu erhalten:
-    get_all_tracking_pages.clear()
-    get_tracking_entries.clear()
+    if hasattr(get_all_tracking_pages, "clear"):
+        get_all_tracking_pages.clear()
+    if hasattr(get_tracking_entries, "clear"):
+        get_tracking_entries.clear()
     updated_entries = get_tracking_entries()
     df_update = pd.DataFrame(updated_entries)
     df_update["date"] = pd.to_datetime(df_update["date"], errors="coerce")
@@ -337,8 +354,10 @@ with st.sidebar:
     if st.button("Update Popularity"):
         update_popularity()
     if st.button("Refresh Daten"):
-        get_all_tracking_pages.clear()
-        get_tracking_entries.clear()
+        if hasattr(get_all_tracking_pages, "clear"):
+            get_all_tracking_pages.clear()
+        if hasattr(get_tracking_entries, "clear"):
+            get_tracking_entries.clear()
         st.experimental_rerun()
     st.markdown("---")
     with st.form("filter_form"):
@@ -376,7 +395,6 @@ for song_id, group in df_all.groupby("song_id"):
     if group.empty:
         continue
     last_pop = group.iloc[-1]["popularity"]
-    # Nutze den Growth-Wert des neuesten Eintrags, falls vorhanden, sonst berechne kumulativ
     last_growth = group.iloc[-1].get("growth")
     if last_growth is None:
         first_pop = group.iloc[0]["popularity"]
@@ -399,7 +417,6 @@ if cum_df.empty:
     st.write("Keine Daten für die Top 10 verfügbar.")
     top10 = pd.DataFrame()
 else:
-    # Nur Songs mit Growth > 0 werden berücksichtigt, und die 10 Songs mit den höchsten Growth-Werten ausgewählt
     top10 = cum_df[cum_df["cumulative_growth"] > 0].sort_values("cumulative_growth", ascending=False).head(10)
 
 num_columns = 5
@@ -422,12 +439,13 @@ for row_df in rows:
             st.markdown(f"<div style='text-align: center;'>Popularity: {row['last_popularity']:.1f}</div>", unsafe_allow_html=True)
             st.markdown(f"<div style='text-align: center; font-weight: bold;'>Growth: {row['cumulative_growth']:.1f}%</div>", unsafe_allow_html=True)
             
-            # Toggle-Checkbox zum Anzeigen/Ausblenden des Graphen – beim Aufklappen werden aktuelle Daten geladen
             show_graph = st.checkbox("Graph anzeigen / ausblenden", key=f"toggle_{row['song_id']}")
             if show_graph:
                 with st.spinner("Graph wird geladen..."):
-                    get_all_tracking_pages.clear()
-                    get_tracking_entries.clear()
+                    if hasattr(get_all_tracking_pages, "clear"):
+                        get_all_tracking_pages.clear()
+                    if hasattr(get_tracking_entries, "clear"):
+                        get_tracking_entries.clear()
                     updated_entries = get_tracking_entries()
                     df_new = pd.DataFrame(updated_entries)
                     df_new["date"] = pd.to_datetime(df_new["date"], errors="coerce").dt.tz_localize(None)
