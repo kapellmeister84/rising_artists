@@ -146,9 +146,9 @@ st.markdown(
         """, unsafe_allow_html=True
     )
 
-    status_message = st.empty()
-    progress_placeholder = st.empty()
-    promo_placeholder = st.empty()
+status_message = st.empty()
+progress_placeholder = st.empty()
+promo_placeholder = st.empty()
     
     
     
