@@ -90,7 +90,7 @@ def get_songs_metadata():
             country_code = ""
             if "Country Code" in props and props["Country Code"].get("rich_text"):
                 country_code = "".join([t.get("plain_text", "") for t in props["Country Code"]["rich_text"]]).strip()
-            # Measurements Relation
+            # Measurements
             measurements_ids = []
             if "Measurements" in props and props["Measurements"].get("relation"):
                 for rel in props["Measurements"]["relation"]:
@@ -122,9 +122,25 @@ def get_songs_metadata():
     return metadata
 
 songs_metadata = get_songs_metadata()
-st.title("Songs Metadata from Notion (with Measurements)")
-st.write("Loaded songs metadata:")
-st.write(songs_metadata)
+
+#########################
+# Log-Fenster in der Sidebar
+#########################
+if "log_messages" not in st.session_state:
+    st.session_state.log_messages = []
+
+def log(msg):
+    st.session_state.log_messages.append(f"{datetime.datetime.now().strftime('%H:%M:%S')}: {msg}")
+    # Zeige das Log-Fenster (feste Höhe) in der Sidebar
+    st.sidebar.text_area("Log", "\n".join(st.session_state.log_messages), height=200)
+
+#########################
+# Fortschrittsbalken-Funktion (wird nur während Wartezeiten angezeigt)
+#########################
+def show_progress(progress, info):
+    progress_bar = st.sidebar.progress(progress)
+    st.sidebar.write(info)
+    return progress_bar
 
 #########################
 # Spotify-Konfiguration
@@ -140,7 +156,6 @@ def get_spotify_token():
 
 SPOTIFY_TOKEN = get_spotify_token()
 
-# Für Playcount: Genau wie im Scanner-Script
 def get_spotify_playcount(track_id, token):
     variables = json.dumps({"uri": f"spotify:track:{track_id}"})
     extensions = json.dumps({
@@ -158,7 +173,7 @@ def get_spotify_playcount(track_id, token):
         data = response.json()
         return int(data["data"]["trackUnion"].get("playcount", 0))
     except requests.HTTPError as e:
-        st.warning(f"Error fetching playcount for track {track_id}: {e}")
+        log(f"Error fetching playcount for {track_id}: {e}")
         return 0
 
 def get_spotify_popularity(track_id, token):
@@ -170,7 +185,7 @@ def get_spotify_popularity(track_id, token):
         data = response.json()
         return data.get("popularity", 0)
     except requests.HTTPError as e:
-        st.warning(f"Error fetching popularity for track {track_id}: {e}")
+        log(f"Error fetching popularity for {track_id}: {e}")
         return 0
 
 def get_monthly_listeners_from_html(artist_id):
@@ -186,11 +201,11 @@ def get_monthly_listeners_from_html(artist_id):
             try:
                 return int(value)
             except Exception as e:
-                st.write("Fehler bei der Konvertierung der monatlichen Hörer:", e)
+                log(f"Fehler bei der Konvertierung der monatlichen Hörer für {artist_id}: {e}")
         else:
-            st.write(f"Kein passender Wert auf der Seite von Artist {artist_id} gefunden.")
+            log(f"Kein passender Wert auf der Seite von Artist {artist_id} gefunden.")
     else:
-        st.write(f"Fehler beim Abrufen der Artist-Seite {artist_id}: Status {r.status_code}")
+        log(f"Fehler beim Abrufen der Artist-Seite {artist_id}: Status {r.status_code}")
     return None
 
 def update_song_data(song, token):
@@ -272,7 +287,7 @@ def update_song_measurements_relation(page_id, new_measurement_id, retries=3):
         if patch_resp.status_code == 200:
             return
         elif patch_resp.status_code == 409:
-            time.sleep(1)  # kurz warten und erneut versuchen
+            time.sleep(1)
             continue
         else:
             patch_resp.raise_for_status()
@@ -308,38 +323,76 @@ def song_exists_in_notion(track_id):
         return False
 
 #########################
+# Suchfunktion: Suche in Songs-Datenbank
+#########################
+def search_songs(query):
+    """Filtert die im Cache geladenen Songs nach 'query' in Track Name oder Artist Name."""
+    query_lower = query.lower()
+    results = {}
+    for key, song in songs_metadata.items():
+        if query_lower in song.get("track_name", "").lower() or query_lower in song.get("artist_name", "").lower():
+            results[key] = song
+    return results
+
+#########################
+# Sidebar: Suchfeld und Logfenster
+#########################
+# Suchfeld in der Sidebar
+search_query = st.sidebar.text_input("Search by artist or song:")
+
+# Log-Fenster (feste Höhe)
+if "log_messages" not in st.session_state:
+    st.session_state.log_messages = []
+def log(msg):
+    st.session_state.log_messages.append(f"{datetime.datetime.now().strftime('%H:%M:%S')}: {msg}")
+    st.sidebar.text_area("Log", "\n".join(st.session_state.log_messages), height=200)
+
+# Fortschrittsbalken (wird nur während Wartezeiten angezeigt)
+def show_progress(progress, info):
+    progress_bar = st.sidebar.progress(progress)
+    st.sidebar.write(info)
+    return progress_bar
+
+#########################
 # Sidebar Buttons
 #########################
 st.sidebar.title("Songs Cache")
 if st.sidebar.button("Get New Music"):
     def run_get_new_music():
         spotify_token = get_spotify_token()
-        st.write("Spotify Access Token:", spotify_token)
+        log(f"Spotify Access Token: {spotify_token}")
         all_songs = []
         for pid in st.secrets["spotify"]["playlist_ids"]:
             songs = get_playlist_songs(pid, spotify_token)
             all_songs.extend(songs)
-        st.write(f"Gesammelte Songs: {len(all_songs)}")
+        log(f"Gesammelte Songs: {len(all_songs)}")
         for song in all_songs:
             if song["track_id"]:
                 if song_exists_in_notion(song["track_id"]):
-                    st.write(f"{song['song_name']} von {song['artist_name']} existiert bereits.")
+                    log(f"{song['song_name']} von {song['artist_name']} existiert bereits.")
                 else:
-                    st.write(f"{song['song_name']} von {song['artist_name']} (Artist ID: {song['artist_id']}, Release Date: {song.get('release_date','')}, Country Code: {song.get('country_code','')}) wird erstellt.")
+                    log(f"{song['song_name']} von {song['artist_name']} (Artist ID: {song['artist_id']}, Release Date: {song.get('release_date','')}, Country Code: {song.get('country_code','')}) wird erstellt.")
                     create_notion_page(song)
             else:
-                st.write(f"{song['song_name']} hat keine Track ID und wird übersprungen.")
+                log(f"{song['song_name']} hat keine Track ID und wird übersprungen.")
     run_get_new_music()
-    st.info("Get New Music abgeschlossen. Bitte Seite neu laden, um die aktualisierten Daten zu sehen.")
+    log("Get New Music abgeschlossen. Bitte Seite neu laden, um die aktualisierten Daten zu sehen.")
 
 if st.sidebar.button("Get Data"):
     msgs = fill_song_measurements()
     for m in msgs:
-        st.write(m)
+        log(m)
 
 #########################
-# Anzeige der geladenen Songs-Metadaten
+# Anzeige der Suchergebnisse im Hauptbereich
 #########################
-st.title("Songs Metadata from Notion (with Measurements)")
-st.write("Loaded songs metadata:")
-st.write(songs_metadata)
+results = {}
+if search_query:
+    results = search_songs(search_query)
+    st.title("Search Results")
+    st.write("Ergebnisse für:", search_query)
+    st.write(results)
+else:
+    st.title("Search Results")
+    st.write("Bitte einen Suchbegriff in der Sidebar eingeben.")
+    
