@@ -551,8 +551,7 @@ else:
                                     st.write("Keine Stream-Daten verfügbar")
                         else:
                             st.write("Keine aktuellen Tracking-Daten verfügbar")
-if 'df_all' not in locals():
-    df_all = df[df["date"].notnull()]                    
+                   
 st.header("Songs filtern")
 if submitted:
     last_data = []
