@@ -486,6 +486,15 @@ with st.sidebar:
         search_query = st.text_input("Song/Artist Suche", "")
         filter_pop_range = st.slider("Popularity Range (letzter Messwert)", 0, 100, (0, 100), step=1, key="filter_pop")
         submitted = st.form_submit_button("Filter anwenden")
+    # Log-Platzhalter in der Seitenleiste
+    with st.sidebar.expander("Log-Details", expanded=True):
+        log_placeholder = st.empty()
+
+    def log(msg):
+        timestamp = datetime.datetime.now().strftime('%H:%M:%S')
+        st.session_state.log_messages.append(f"{timestamp} - {msg}")
+        # Aktualisiere den Log-Bereich als scrollbares Textfeld
+        log_placeholder.text("\n".join(st.session_state.log_messages))
 
 if "tracking_entries" in st.session_state:
     tracking_entries = st.session_state.tracking_entries
