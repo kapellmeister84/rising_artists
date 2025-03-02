@@ -3,6 +3,7 @@ import requests
 import datetime
 import json
 import time
+import re
 from concurrent.futures import ThreadPoolExecutor
 
 from utils import set_background, set_dark_mode
@@ -12,9 +13,8 @@ set_dark_mode()
 set_background("https://wallpapershome.com/images/pages/pic_h/26334.jpg")
 
 #########################
-# Notion-Konfiguration  #
+# Notion-Konfiguration
 #########################
-# Verwende die neuen Datenbank-IDs
 songs_database_id = st.secrets["notion"]["song-database"]
 measurements_db_id = st.secrets["notion"]["measurements-database"]
 notion_secret = st.secrets["notion"]["secret"]
@@ -66,24 +66,31 @@ def get_songs_metadata():
         measurement_futures = {}
         for page in pages:
             props = page.get("properties", {})
+            # Track Name
             track_name = ""
             if "Track Name" in props and props["Track Name"].get("title"):
                 track_name = "".join([t.get("plain_text", "") for t in props["Track Name"]["title"]]).strip()
+            # Artist Name
             artist_name = ""
             if "Artist Name" in props and props["Artist Name"].get("rich_text"):
                 artist_name = "".join([t.get("plain_text", "") for t in props["Artist Name"]["rich_text"]]).strip()
+            # Artist ID
             artist_id = ""
             if "Artist ID" in props and props["Artist ID"].get("rich_text"):
                 artist_id = "".join([t.get("plain_text", "") for t in props["Artist ID"]["rich_text"]]).strip()
+            # Track ID
             track_id = ""
             if "Track ID" in props and props["Track ID"].get("rich_text"):
                 track_id = "".join([t.get("plain_text", "") for t in props["Track ID"]["rich_text"]]).strip()
+            # Release Date
             release_date = ""
             if "Release Date" in props and props["Release Date"].get("date"):
                 release_date = props["Release Date"]["date"].get("start", "")
+            # Country Code
             country_code = ""
             if "Country Code" in props and props["Country Code"].get("rich_text"):
                 country_code = "".join([t.get("plain_text", "") for t in props["Country Code"]["rich_text"]]).strip()
+            # Measurements: Relation Property
             measurements_ids = []
             if "Measurements" in props and props["Measurements"].get("relation"):
                 for rel in props["Measurements"]["relation"]:
@@ -133,7 +140,7 @@ def get_spotify_token():
 
 SPOTIFY_TOKEN = get_spotify_token()
 
-# Für Playcount: Genau wie in deinem Scanner-Script
+# Für Playcount: Genau wie im Scanner-Script
 def get_spotify_playcount(track_id, token):
     variables = json.dumps({"uri": f"spotify:track:{track_id}"})
     extensions = json.dumps({
@@ -158,6 +165,27 @@ def get_spotify_popularity(track_id, token):
     data = response.json()
     return data.get("popularity", 0)
 
+# Neue Funktion: Monthly Listeners über HTML-Scraping (wie im Beispiel)
+def get_monthly_listeners_from_html(artist_id):
+    url = f"https://open.spotify.com/artist/{artist_id}"
+    headers = {"User-Agent": "Mozilla/5.0", "Accept-Language": "de"}
+    r = requests.get(url, headers=headers)
+    if r.status_code == 200:
+        html = r.text
+        match = re.search(r'([\d\.,]+)\s*(?:Hörer monatlich|monatliche Hörer)', html, re.IGNORECASE)
+        if match:
+            value = match.group(1)
+            value = value.replace('.', '').replace(',', '')
+            try:
+                return int(value)
+            except Exception as e:
+                st.write("Fehler bei der Konvertierung der monatlichen Hörer:", e)
+        else:
+            st.write(f"Kein passender Wert auf der Seite von Artist {artist_id} gefunden.")
+    else:
+        st.write(f"Fehler beim Abrufen der Artist-Seite {artist_id}: Status {r.status_code}")
+    return None
+
 def update_song_data(song, token):
     url = f"https://api.spotify.com/v1/tracks/{song['track_id']}"
     headers = {"Authorization": f"Bearer {token}"}
@@ -179,19 +207,23 @@ def update_song_data(song, token):
                 artist_pop = artist_data.get("popularity", 0)
                 artist_followers = artist_data.get("followers", {}).get("total", 0)
         streams = get_spotify_playcount(song["track_id"], token)
+        monthly_listeners = get_monthly_listeners_from_html(artist_id)
+        if monthly_listeners is None:
+            monthly_listeners = artist_followers
         return {
             "song_pop": song_pop,
             "artist_pop": artist_pop,
             "country_code": country_code,
             "artist_followers": artist_followers,
-            "streams": streams
+            "streams": streams,
+            "monthly_listeners": monthly_listeners
         }
     else:
         st.error(f"Error fetching data for track {song['track_id']}: {response.text}")
         return {}
 
 #########################
-# Neue Funktion: Neue Measurement-Einträge anlegen
+# Neue Funktion: Neue Measurement-Einträge anlegen und Relation aktualisieren
 #########################
 def create_measurement_entry(song, details):
     now = datetime.datetime.now().isoformat()
@@ -203,7 +235,7 @@ def create_measurement_entry(song, details):
             "Song Pop": {"number": int(details.get("song_pop") or 0)},
             "Artist Pop": {"number": int(details.get("artist_pop") or 0)},
             "Streams": {"number": int(details.get("streams") or 0)},
-            "Monthly Listeners": {"number": 0},
+            "Monthly Listeners": {"number": int(details.get("monthly_listeners") or 0)},
             "Artist Followers": {"number": int(details.get("artist_followers") or 0)}
         }
     }
@@ -229,11 +261,14 @@ def update_song_measurements_relation(page_id, new_measurement_id):
         }
     }
     patch_resp = requests.patch(url, headers=notion_headers, json=payload)
-    patch_resp.raise_for_status()
+    try:
+        patch_resp.raise_for_status()
+    except requests.HTTPError as e:
+        if patch_resp.status_code == 409:
+            st.warning(f"Conflict updating Measurements for page {page_id}. Der Eintrag existiert möglicherweise bereits.")
+        else:
+            raise
 
-#########################
-# Neue Funktion: "Fill Song Details" – legt neue Measurement-Einträge an, ohne alte zu überschreiben
-#########################
 def fill_song_measurements():
     spotify_token = get_spotify_token()
     messages = []
