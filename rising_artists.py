@@ -14,7 +14,6 @@ set_dark_mode()
 set_background("https://wallpapershome.com/images/pages/pic_h/26334.jpg")
 
 # === Notion-Konfiguration ===
-# Persönliche Zugangsdaten aus st.secrets
 tracking_db_id = st.secrets["notion"]["tracking_db_id"]      # Weeks-/Tracking-Datenbank
 songs_database_id = st.secrets["notion"]["songs_db_id"]          # Songs-Datenbank
 notion_secret = st.secrets["notion"]["token"]
@@ -83,7 +82,7 @@ def update_streams_for_measurement(entry_id, streams):
     response = requests.patch(url, headers=notion_headers, json=payload)
     response.raise_for_status()
 
-# Für dynamische Daten mit TTL (5 Minuten)
+# Diese Funktionen müssen vor ihrer Verwendung definiert sein:
 @st.cache_data(ttl=300, show_spinner=False)
 def get_all_tracking_pages():
     url = f"{notion_query_endpoint}/{tracking_db_id}/query"
@@ -109,6 +108,41 @@ def get_all_tracking_pages():
     return pages
 
 @st.cache_data(ttl=300, show_spinner=False)
+def get_tracking_entries():
+    pages = get_all_tracking_pages()
+    entries = []
+    for page in pages:
+        entry_id = page.get("id")
+        props = page.get("properties", {})
+        pop = props.get("Popularity Score", {}).get("number")
+        date_str = props.get("Date", {}).get("date", {}).get("start")
+        growth = props.get("Growth", {}).get("number")
+        song_relations = props.get("Song", {}).get("relation", [])
+        for relation in song_relations:
+            song_id = relation.get("id")
+            entries.append({
+                "entry_id": entry_id,
+                "song_id": song_id,
+                "date": date_str,
+                "popularity": pop,
+                "growth": growth,
+            })
+    return entries
+
+@st.cache_data(ttl=300, show_spinner=False)
+def get_spotify_data(spotify_track_id):
+    url = f"https://api.spotify.com/v1/tracks/{spotify_track_id}"
+    response = requests.get(url, headers={"Authorization": f"Bearer {SPOTIFY_TOKEN}"})
+    if response.status_code == 200:
+        data = response.json()
+        cover_url = ""
+        if data.get("album") and data["album"].get("images"):
+            cover_url = data["album"]["images"][0].get("url", "")
+        spotify_link = data.get("external_urls", {}).get("spotify", "")
+        return cover_url, spotify_link
+    return "", ""
+
+@st.cache_data(show_spinner=False)
 def get_metadata_from_tracking_db():
     pages = get_all_tracking_pages()
     metadata = {}
@@ -141,56 +175,11 @@ def get_metadata_from_tracking_db():
             "track_name": track_name,
             "artist": artist,
             "release_date": release_date,
-            "spotify_track_id": spotify_track_id
+            "spotify_track_id": spotify_track_id,
         }
     return metadata
 
-# Neue Funktion: Nur die Tracking-Einträge für einen bestimmten Song abrufen
-def get_tracking_entries_for_song(song_id):
-    url = f"{notion_query_endpoint}/{tracking_db_id}/query"
-    payload = {
-       "filter": {
-           "property": "Song",
-           "relation": {
-               "contains": song_id
-           }
-       },
-       "page_size": 100
-    }
-    response = requests.post(url, headers=notion_headers, json=payload)
-    response.raise_for_status()
-    data = response.json()
-    entries = []
-    for page in data.get("results", []):
-         entry_id = page.get("id")
-         props = page.get("properties", {})
-         pop = props.get("Popularity Score", {}).get("number")
-         date_str = props.get("Date", {}).get("date", {}).get("start")
-         growth = props.get("Growth", {}).get("number")
-         streams_val = props.get("Streams", {}).get("number")
-         entries.append({
-              "entry_id": entry_id,
-              "song_id": song_id,
-              "date": date_str,
-              "popularity": pop,
-              "growth": growth,
-              "Streams": streams_val
-         })
-    return entries
-
 # Für Playcounts keine Caches – immer aktuell
-def get_spotify_data(spotify_track_id):
-    url = f"https://api.spotify.com/v1/tracks/{spotify_track_id}"
-    response = requests.get(url, headers={"Authorization": f"Bearer {SPOTIFY_TOKEN}"})
-    if response.status_code == 200:
-        data = response.json()
-        cover_url = ""
-        if data.get("album") and data["album"].get("images"):
-            cover_url = data["album"]["images"][0].get("url", "")
-        spotify_link = data.get("external_urls", {}).get("spotify", "")
-        return cover_url, spotify_link
-    return "", ""
-
 def get_spotify_playcount(track_id, token):
     variables = json.dumps({"uri": f"spotify:track:{track_id}"})
     extensions = json.dumps({
