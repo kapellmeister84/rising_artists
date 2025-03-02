@@ -39,12 +39,12 @@ def get_measurement_details(measurement_id):
     response.raise_for_status()
     data = response.json()
     props = data.get("properties", {})
-    # Wir gehen davon aus, dass die Measurements-Datenbank zusätzlich ein "Timestamp"-Feld hat
-    timestamp = ""
-    if "Timestamp" in props and props["Timestamp"].get("date"):
-        timestamp = props["Timestamp"]["date"].get("start", "")
+    # Wir versuchen, falls vorhanden, auch das Datum aus einem Property "Measurement Date" auszulesen
+    measurement_date = ""
+    if "Measurement Date" in props and props["Measurement Date"].get("date"):
+        measurement_date = props["Measurement Date"]["date"].get("start", "")
     return {
-        "timestamp": timestamp,
+        "measurement_date": measurement_date,
         "song_pop": int(props.get("Song Pop", {}).get("number") or 0),
         "artist_pop": int(props.get("Artist Pop", {}).get("number") or 0),
         "streams": int(props.get("Streams", {}).get("number") or 0),
@@ -73,31 +73,24 @@ def get_songs_metadata():
         measurement_futures = {}
         for page in pages:
             props = page.get("properties", {})
-            # Track Name
             track_name = ""
             if "Track Name" in props and props["Track Name"].get("title"):
                 track_name = "".join([t.get("plain_text", "") for t in props["Track Name"]["title"]]).strip()
-            # Artist Name
             artist_name = ""
             if "Artist Name" in props and props["Artist Name"].get("rich_text"):
                 artist_name = "".join([t.get("plain_text", "") for t in props["Artist Name"]["rich_text"]]).strip()
-            # Artist ID
             artist_id = ""
             if "Artist ID" in props and props["Artist ID"].get("rich_text"):
                 artist_id = "".join([t.get("plain_text", "") for t in props["Artist ID"]["rich_text"]]).strip()
-            # Track ID
             track_id = ""
             if "Track ID" in props and props["Track ID"].get("rich_text"):
                 track_id = "".join([t.get("plain_text", "") for t in props["Track ID"]["rich_text"]]).strip()
-            # Release Date
             release_date = ""
             if "Release Date" in props and props["Release Date"].get("date"):
                 release_date = props["Release Date"]["date"].get("start", "")
-            # Country Code
             country_code = ""
             if "Country Code" in props and props["Country Code"].get("rich_text"):
                 country_code = "".join([t.get("plain_text", "") for t in props["Country Code"]["rich_text"]]).strip()
-            # Measurements Relation
             measurements_ids = []
             if "Measurements" in props and props["Measurements"].get("relation"):
                 for rel in props["Measurements"]["relation"]:
@@ -120,7 +113,7 @@ def get_songs_metadata():
             try:
                 details = future.result()
             except Exception as e:
-                details = {"timestamp": "", "song_pop": 0, "artist_pop": 0, "streams": 0, "monthly_listeners": 0, "artist_followers": 0}
+                details = {"measurement_date": "", "song_pop": 0, "artist_pop": 0, "streams": 0, "monthly_listeners": 0, "artist_followers": 0}
             for key, song_data in metadata.items():
                 if measurement_id in song_data.get("measurements_ids", []):
                     if "measurements" not in song_data:
@@ -214,9 +207,6 @@ def get_monthly_listeners_from_html(artist_id):
         log(f"Fehler beim Abrufen der Artist-Seite {artist_id}: Status {r.status_code}")
     return None
 
-######################################
-# Neue Funktion: Aktualisierung von Song-Daten via Spotify
-######################################
 def update_song_data(song, token):
     url = f"https://api.spotify.com/v1/tracks/{song['track_id']}"
     headers = {"Authorization": f"Bearer {token}"}
@@ -260,14 +250,12 @@ def update_song_data(song, token):
 ######################################
 # Neue Funktion: Neue Measurement-Einträge anlegen und Relation aktualisieren
 ######################################
-# Hier wird zusätzlich das Datum als Timestamp gespeichert.
 def create_measurement_entry(song, details):
-    now_iso = datetime.datetime.now().isoformat()
+    now = datetime.datetime.now().isoformat()
     payload = {
         "parent": {"database_id": measurements_db_id},
         "properties": {
-            "Name": {"title": [{"text": {"content": f"Measurement {now_iso}"}}]},
-            "Timestamp": {"date": {"start": now_iso}},
+            "Name": {"title": [{"text": {"content": f"Measurement {now}"}}]},
             "Song": {"relation": [{"id": song["page_id"]}]},
             "Song Pop": {"number": int(details.get("song_pop") or 0)},
             "Artist Pop": {"number": int(details.get("artist_pop") or 0)},
@@ -353,32 +341,32 @@ def group_results_by_artist(results):
 # Neue Funktion: Graphen anzeigen
 ######################################
 def display_artist_history(measurements):
-    # measurements: Liste von Measurement-Dictionaries für einen Artist
-    # Wir erwarten, dass jedes Dictionary mindestens "timestamp", "artist_pop", "monthly_listeners" und "artist_followers" enthält
     if not measurements:
         st.write("Keine historischen Daten vorhanden.")
         return
-    # Erstelle einen DataFrame, wobei der Timestamp als Datum geparst wird
     df = pd.DataFrame(measurements)
-    if "timestamp" in df.columns:
-        df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-    fig = px.line(df, x="timestamp", y=["artist_pop", "monthly_listeners", "artist_followers"],
-                  labels={"timestamp": "Timestamp", "value": "Wert", "variable": "Metric"},
-                  title="Artist History")
-    st.plotly_chart(fig, use_container_width=True)
+    if "measurement_date" in df.columns and not df["measurement_date"].isnull().all():
+        df["measurement_date"] = pd.to_datetime(df["measurement_date"], errors="coerce")
+        fig = px.line(df, x="measurement_date", y=["artist_pop", "monthly_listeners", "artist_followers"],
+                      labels={"measurement_date": "Date", "value": "Wert", "variable": "Metric"},
+                      title="Artist History")
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.write("Keine Datum-Informationen in den Messdaten vorhanden.")
 
 def display_song_history(measurements):
-    # Zeigt die Entwicklung von Streams und Song Popularity für einen Song
     if not measurements:
         st.write("Keine historischen Daten vorhanden.")
         return
     df = pd.DataFrame(measurements)
-    if "timestamp" in df.columns:
-        df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-    fig = px.line(df, x="timestamp", y=["song_pop", "streams"],
-                  labels={"timestamp": "Timestamp", "value": "Wert", "variable": "Metric"},
-                  title="Song History")
-    st.plotly_chart(fig, use_container_width=True)
+    if "measurement_date" in df.columns and not df["measurement_date"].isnull().all():
+        df["measurement_date"] = pd.to_datetime(df["measurement_date"], errors="coerce")
+        fig = px.line(df, x="measurement_date", y=["song_pop", "streams"],
+                      labels={"measurement_date": "Date", "value": "Wert", "variable": "Metric"},
+                      title="Song History")
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.write("Keine Datum-Informationen in den Messdaten vorhanden.")
 
 ######################################
 # Neue Funktion: Suchergebnisse anzeigen als Karteikarten (gruppiert nach Artist)
@@ -387,7 +375,7 @@ def display_search_results(results):
     st.title("Search Results")
     grouped = group_results_by_artist(results)
     for group_key, songs in grouped.items():
-        # Für den Artist: Verwende das erste Song als Repräsentant
+        # Artist-Repräsentant
         representative = songs[0]
         artist_name = representative.get("artist_name")
         artist_id = representative.get("artist_id")
@@ -412,18 +400,15 @@ def display_search_results(results):
         </div>
         """
         st.markdown(artist_card, unsafe_allow_html=True)
-        # Expander für Artist-History
         with st.expander("Show Artist History"):
-            # Sammle alle Measurement-Einträge aller Songs dieses Künstlers
+            # Sammle alle Measurement-Einträge für diesen Artist (alle Songs)
             artist_measurements = []
             for song in songs:
                 if "measurements" in song:
                     artist_measurements.extend(song["measurements"])
             display_artist_history(artist_measurements)
-        # Anzeige der Songs des Künstlers
         st.markdown("<div style='display: flex; flex-wrap: wrap;'>", unsafe_allow_html=True)
         for song in songs:
-            # Hole Cover und Spotify-Song-Link
             cover_url = ""
             track_url = ""
             try:
@@ -437,7 +422,6 @@ def display_search_results(results):
                 track_url = data.get("external_urls", {}).get("spotify", "")
             except Exception as e:
                 log(f"Fehler beim Abrufen des Covers für {song.get('track_name')}: {e}")
-            # Song-Karte: Das Coverbild ist ein Link zum Song
             song_card = f"""
             <div style="
                 border: 1px solid #ccc;
