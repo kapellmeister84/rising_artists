@@ -7,8 +7,15 @@ import pandas as pd
 import plotly.express as px
 from concurrent.futures import ThreadPoolExecutor
 import uuid
+import streamlit as st
+from utils import set_background
+
+
 
 st.set_page_config(layout="wide")
+
+set_background("https://wallpapershome.com/images/pages/pic_h/26334.jpg")
+st.write("Hallo, hier ist deine App mit coolem Hintergrund!")
 
 # === Notion-Konfiguration ===
 tracking_db_id = "1a9b6204cede80e29338ede2c76999f2"  # Tracking-Datenbank (enthält Rollups für "Artist" und "Release Date", Relation "Song")
