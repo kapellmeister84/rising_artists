@@ -307,10 +307,10 @@ with st.sidebar:
     if st.button("Update Popularity"):
         update_popularity()
     if st.button("Refresh Daten"):
-        # Leert alle Caches, sodass alle Daten neu von Notion geladen werden
+        # Cache leeren
         get_all_tracking_pages.clear()
         get_tracking_entries.clear()
-        st.experimental_rerun()
+        st.write("Daten wurden aktualisiert. Bitte lade die Seite neu.")
     st.markdown("---")
     with st.form("filter_form"):
         search_query = st.text_input("Song/Artist Suche", "")
