@@ -7,6 +7,7 @@ import pandas as pd
 import plotly.express as px
 from concurrent.futures import ThreadPoolExecutor
 import uuid
+import math
 from math import isnan
 from utils import set_background, set_dark_mode
 
@@ -16,7 +17,7 @@ set_background("https://wallpapershome.com/images/pages/pic_h/26334.jpg")
 
 # === Notion-Konfiguration ===
 tracking_db_id = st.secrets["notion"]["tracking_db_id"]      # Weeks-/Tracking-Datenbank
-songs_database_id = st.secrets["notion"]["songs_db_id"]      # Songs-Datenbank
+songs_database_id = st.secrets["notion"]["songs_db_id"]        # Songs-Datenbank
 notion_secret = st.secrets["notion"]["token"]
 notion_query_endpoint = "https://api.notion.com/v1/databases"
 notion_page_endpoint = "https://api.notion.com/v1/pages"
@@ -85,8 +86,6 @@ def update_growth_for_measurement(entry_id, growth):
     payload = {"properties": {"Growth": {"number": growth}}}
     response = requests.patch(url, headers=notion_headers, json=payload)
     response.raise_for_status()
-
-
 
 def update_streams_for_measurement(entry_id, streams):
     url = f"{notion_page_endpoint}/{entry_id}"
@@ -170,7 +169,7 @@ def get_metadata_from_tracking_db():
             "track_name": track_name,
             "artist": artist,
             "release_date": release_date,
-            "spotify_track_id": spotify_track_id,
+            "spotify_track_id": spotify_track_id
         }
     return metadata
 
@@ -329,7 +328,7 @@ def update_popularity():
     song_pages = get_all_song_page_ids()
     total = len(song_pages)
 
-    # Hol dir für jeden Song die echte Spotify-Popularity
+    # Globales Update: Für jeden Song wird der aktuelle Popularity-Wert von Spotify geholt
     for idx, song in enumerate(song_pages):
         page_id = song["page_id"]
         status_text.text(f"Verarbeite Seite: {page_id}")
@@ -342,9 +341,7 @@ def update_popularity():
             st.write(f"Fehler bei Track ID {track_id}: {e}")
             spotify_pop = 0
 
-        # Lege in der Tracking-DB einen Eintrag mit dem aktuellen Popularity-Wert an
         create_week_entry(page_id, spotify_pop, track_id)
-
         progress_bar.progress(int((idx + 1) / total * 100))
     
     status_text.text("Basis-Popularity aktualisiert. Jetzt Growth und Streams...")
@@ -404,6 +401,50 @@ def update_popularity():
     st.session_state.tracking_entries = get_tracking_entries()
     status_text.text("Fertig!")
 
+# Neue Funktionen für den Hype Score
+def get_artist_data(artist_name, token):
+    """Sucht den Artist bei Spotify und gibt relevante Daten zurück."""
+    search_url = "https://api.spotify.com/v1/search"
+    headers = {"Authorization": f"Bearer {token}"}
+    params = {
+        "q": artist_name,
+        "type": "artist",
+        "limit": 1
+    }
+    response = requests.get(search_url, headers=headers, params=params)
+    response.raise_for_status()
+    data = response.json()
+    artists = data.get("artists", {}).get("items", [])
+    if not artists:
+        return None
+    artist = artists[0]
+    return {
+        "name": artist.get("name"),
+        "popularity": artist.get("popularity", 0),
+        "followers": artist.get("followers", {}).get("total", 0)
+    }
+
+def calculate_hype_score(artist_data):
+    """
+    Berechnet den Hype Score anhand des Popularity-Werts und der Follower-Zahlen.
+    Hype Score = Popularity + (log10(Follower) * 10)
+    Der Score wird maximal auf 100 begrenzt.
+    """
+    popularity = artist_data.get("popularity", 0)
+    followers = artist_data.get("followers", 0)
+    followers_score = math.log10(followers) * 10 if followers > 0 else 0
+    hype = popularity + followers_score
+    return round(min(hype, 100), 1)
+
+def update_artist_on_demand(artist_name):
+    """Aktualisiert einzelne Artist-Daten und berechnet den Hype Score."""
+    token = get_spotify_token()
+    artist_data = get_artist_data(artist_name, token)
+    if artist_data:
+        hype_score = calculate_hype_score(artist_data)
+        return hype_score, artist_data
+    return None, None
+
 # ─────────────────────────────────────────
 # ─────────── UI / Darstellung ───────────
 # ─────────────────────────────────────────
@@ -417,7 +458,6 @@ with st.sidebar:
     if st.button("Update Popularity"):
         update_popularity()
     if st.button("Refresh Daten"):
-        # Cache leeren und session_state zurücksetzen
         if "tracking_entries" in st.session_state:
             del st.session_state["tracking_entries"]
         get_metadata_from_tracking_db.clear()
@@ -452,7 +492,7 @@ else:
     df["spotify_track_id"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("spotify_track_id", ""))
     df_all = df[df["date"].notnull()]
 
-    # Top 10
+    # Top 10 Songs mit Hype Score
     cumulative = []
     for song_id, group in df_all.groupby("song_id"):
         group = group.sort_values("date")
@@ -462,13 +502,12 @@ else:
         last_growth = group.iloc[-1].get("growth")
         if last_growth is None:
             first_pop = group.iloc[0]["popularity"]
-            if first_pop and first_pop != 0:
-                cumulative_growth = ((last_pop - first_pop) / first_pop) * 100
-            else:
-                cumulative_growth = 0
+            cumulative_growth = ((last_pop - first_pop) / first_pop) * 100 if first_pop and first_pop != 0 else 0
         else:
             cumulative_growth = last_growth
         meta = metadata.get(song_id, {"track_name": "Unbekannter Track", "artist": "Unbekannt", "release_date": "", "spotify_track_id": ""})
+        # Update Artist-Daten on demand für Top 10 Anzeige
+        hype_score, _ = update_artist_on_demand(meta["artist"])
         cumulative.append({
             "song_id": song_id,
             "track_name": meta["track_name"],
@@ -476,7 +515,8 @@ else:
             "release_date": meta["release_date"],
             "spotify_track_id": meta["spotify_track_id"],
             "last_popularity": last_pop,
-            "cumulative_growth": cumulative_growth
+            "cumulative_growth": cumulative_growth,
+            "hype_score": hype_score if hype_score is not None else 0
         })
 
     cum_df = pd.DataFrame(cumulative)
@@ -495,7 +535,7 @@ else:
             if row["spotify_track_id"]:
                 cover_url, spotify_link = get_spotify_data(row["spotify_track_id"])
             with cols[idx]:
-                st.markdown(f"{row['track_name']}", unsafe_allow_html=True)
+                st.markdown(f"{row['track_name']}  \nHype Score: {row['hype_score']}")
                 if cover_url and spotify_link:
                     st.markdown(f'<a href="{spotify_link}" target="_blank"><img src="{cover_url}" style="width:100%;" /></a>', unsafe_allow_html=True)
                 elif cover_url:
@@ -505,7 +545,6 @@ else:
                 st.markdown(f"<div style='text-align: center;'>Release: {row['release_date']}</div>", unsafe_allow_html=True)
                 st.markdown(f"<div style='text-align: center;'>Popularity: {row['last_popularity']:.1f}</div>", unsafe_allow_html=True)
                 st.markdown(f"<div style='text-align: center; font-weight: bold;'>Growth: {row['cumulative_growth']:.1f}%</div>", unsafe_allow_html=True)
-                
                 show_graph = st.checkbox("Graph anzeigen / ausblenden", key=f"toggle_{row['song_id']}")
                 if show_graph:
                     with st.spinner("Graph wird geladen..."):
@@ -564,6 +603,8 @@ if submitted and not df_all.empty:
             "release_date": "",
             "spotify_track_id": ""
         })
+        # Update Artist-Daten on demand für Suchergebnisse
+        hype_score, _ = update_artist_on_demand(meta["artist"])
         last_data.append({
             "song_id": song_id,
             "track_name": meta.get("track_name", "Unbekannter Track"),
@@ -571,7 +612,8 @@ if submitted and not df_all.empty:
             "release_date": meta.get("release_date", ""),
             "spotify_track_id": meta.get("spotify_track_id", ""),
             "last_popularity": last_pop,
-            "growth": growth_val
+            "growth": growth_val,
+            "hype_score": hype_score if hype_score is not None else 0
         })
         filter_progress.progress((idx + 1) / total_groups)
     last_df = pd.DataFrame(last_data)
@@ -601,7 +643,7 @@ if submitted and not df_all.empty:
         with st.container():
             st.markdown(f"""**{row['track_name']}** – {row['artist']}  
 Release Date: {row['release_date']}  
-Popularity: {row['last_popularity']:.1f} | Growth: {row['growth']:.1f}%""")
+Popularity: {row['last_popularity']:.1f} | Growth: {row['growth']:.1f}% | Hype Score: {row['hype_score']:.1f}""")
             if cover_url:
                 st.image(cover_url, width=100)
             if spotify_link:
