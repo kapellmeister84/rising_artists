@@ -324,6 +324,7 @@ def update_popularity():
         update_growth_for_measurement(latest_entry_id, growth)
     
     st.write("Aktualisiere Streams für jeden Song...")
+    # Fortschrittsbalken für Streams
     get_all_tracking_pages.clear()
     get_tracking_entries.clear()
     updated_entries = get_tracking_entries()
@@ -331,20 +332,27 @@ def update_popularity():
     df_update["date"] = pd.to_datetime(df_update["date"], errors="coerce")
     df_update = df_update.dropna(subset=["date", "song_id"])
     metadata = get_metadata_from_tracking_db()
-    for song_id, group in df_update.groupby("song_id"):
+    stream_groups = list(df_update.groupby("song_id"))
+    progress_stream = st.progress(0)
+    total_groups = len(stream_groups)
+    for idx, (song_id, group) in enumerate(stream_groups):
         group = group.sort_values("date")
         latest_entry_id = group.iloc[-1]["entry_id"]
         song_meta = metadata.get(song_id, {})
         spotify_track_id = song_meta.get("spotify_track_id", "")
+        streams = 0
         if spotify_track_id:
             try:
                 streams = get_spotify_playcount(spotify_track_id, SPOTIFY_TOKEN)
+                # Falls 0, nochmals versuchen:
+                if streams == 0:
+                    time.sleep(1)
+                    streams = get_spotify_playcount(spotify_track_id, SPOTIFY_TOKEN)
             except Exception as e:
-                st.write(f"Fehler beim Abrufen von Streams für {song_id}: {e}")
                 streams = 0
         else:
             streams = 0
-        st.write(f"Song {song_id}: Streams = {streams}")
+        progress_stream.progress((idx + 1) / total_groups)
         update_streams_for_measurement(latest_entry_id, streams)
 
 def get_spotify_playcount(track_id, token):
