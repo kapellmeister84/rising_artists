@@ -484,7 +484,8 @@ df = pd.DataFrame(tracking_entries)
 
 if df.empty:
     st.write("Tracking-Daten noch nicht aktualisiert. Bitte klicke auf 'Update Popularity'.")
-    df_all = pd.DataFrame()  # df_all als leeres DataFrame definieren
+    # Erstelle ein leeres DataFrame mit den erwarteten Spalten
+    df_all = pd.DataFrame(columns=["entry_id", "song_id", "date", "popularity", "growth", "Streams"])
 else:
     df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.tz_localize(None)
     df["track_name"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("track_name", "Unbekannter Track"))
