@@ -36,21 +36,27 @@ def get_spotify_token():
     return response.json().get("accessToken")
 SPOTIFY_TOKEN = get_spotify_token()
 
-# --- Utility-Funktion zum Löschen alter Songs ---
+# --- Utility-Funktion zum Archivieren alter Songs ---
+def archive_page(page_id):
+    url = f"{notion_page_endpoint}/{page_id}"
+    payload = {"archived": True}
+    response = requests.patch(url, headers=notion_headers, json=payload)
+    response.raise_for_status()
+
 def cleanup_old_songs():
     """
     Überprüft alle Tracking-Einträge und archiviert (löscht) alle Songs,
     die seit mindestens 3 Wochen getrackt werden.
-    Dabei wird das früheste Tracking-Datum eines Songs betrachtet und
-    falls die Differenz zur aktuellen Zeit >= 21 Tage beträgt, werden alle
-    zugehörigen Tracking-Einträge und die Song-Seite archiviert.
     """
-    st.write("Bereinige alte Songs...")
-    # Cache leeren, falls vorhanden
-    if hasattr(get_all_tracking_pages, "clear"):
-        get_all_tracking_pages.clear()
-    if hasattr(get_tracking_entries, "clear"):
-        get_tracking_entries.clear()
+    st.write("Bereinige alte Songs ...")
+    try:
+        st.cache_data.clear(get_all_tracking_pages)
+    except Exception as e:
+        st.write("Fehler beim Leeren des Caches (get_all_tracking_pages):", e)
+    try:
+        st.cache_data.clear(get_tracking_entries)
+    except Exception as e:
+        st.write("Fehler beim Leeren des Caches (get_tracking_entries):", e)
     
     entries = get_tracking_entries()
     if not entries:
@@ -75,16 +81,7 @@ def cleanup_old_songs():
             except Exception as e:
                 st.write(f"Fehler beim Archivieren der Song-Seite {song_id}: {e}")
 
-def archive_page(page_id):
-    """
-    Archiviert eine Seite in Notion (setzt "archived": true).
-    """
-    url = f"{notion_page_endpoint}/{page_id}"
-    payload = {"archived": True}
-    response = requests.patch(url, headers=notion_headers, json=payload)
-    response.raise_for_status()
-
-# --- Rufe Cleanup beim Start auf ---
+# --- Cleanup beim Start ausführen ---
 cleanup_old_songs()
 
 # --- Hilfsfunktionen ---
@@ -237,7 +234,7 @@ def update_popularity():
     status_text = st.empty()
     
     songs_database_id = "1a9b6204cede8006b67fd247dc660ba4"
-    week_database_id = tracking_db_id  # Wir nutzen hier die Tracking-Datenbank
+    week_database_id = tracking_db_id
 
     def get_all_song_page_ids():
         url = f"{notion_query_endpoint}/{songs_database_id}/query"
@@ -322,14 +319,16 @@ def update_popularity():
     st.success("Popularity wurde aktualisiert!")
     status_text.empty()
     
-    # Growth-Berechnung: Für jeden Song werden die beiden neuesten Messwerte verglichen und der Growth-Wert
-    # wird in den neuesten Eintrag geschrieben.
+    # Growth-Berechnung: Vergleiche die beiden neuesten Messwerte jedes Songs und update den Growth-Wert
     st.write("Berechne Growth für jeden Song...")
-    # Cache leeren, um die aktuellsten Daten zu erhalten:
-    if hasattr(get_all_tracking_pages, "clear"):
-        get_all_tracking_pages.clear()
-    if hasattr(get_tracking_entries, "clear"):
-        get_tracking_entries.clear()
+    try:
+        st.cache_data.clear(get_all_tracking_pages)
+    except Exception as e:
+        st.write("Fehler beim Leeren des Caches (get_all_tracking_pages):", e)
+    try:
+        st.cache_data.clear(get_tracking_entries)
+    except Exception as e:
+        st.write("Fehler beim Leeren des Caches (get_tracking_entries):", e)
     updated_entries = get_tracking_entries()
     df_update = pd.DataFrame(updated_entries)
     df_update["date"] = pd.to_datetime(df_update["date"], errors="coerce")
@@ -354,10 +353,14 @@ with st.sidebar:
     if st.button("Update Popularity"):
         update_popularity()
     if st.button("Refresh Daten"):
-        if hasattr(get_all_tracking_pages, "clear"):
-            get_all_tracking_pages.clear()
-        if hasattr(get_tracking_entries, "clear"):
-            get_tracking_entries.clear()
+        try:
+            st.cache_data.clear(get_all_tracking_pages)
+        except Exception as e:
+            st.write("Fehler beim Leeren des Caches (get_all_tracking_pages):", e)
+        try:
+            st.cache_data.clear(get_tracking_entries)
+        except Exception as e:
+            st.write("Fehler beim Leeren des Caches (get_tracking_entries):", e)
         st.experimental_rerun()
     st.markdown("---")
     with st.form("filter_form"):
@@ -442,10 +445,11 @@ for row_df in rows:
             show_graph = st.checkbox("Graph anzeigen / ausblenden", key=f"toggle_{row['song_id']}")
             if show_graph:
                 with st.spinner("Graph wird geladen..."):
-                    if hasattr(get_all_tracking_pages, "clear"):
-                        get_all_tracking_pages.clear()
-                    if hasattr(get_tracking_entries, "clear"):
-                        get_tracking_entries.clear()
+                    try:
+                        st.cache_data.clear(get_all_tracking_pages)
+                        st.cache_data.clear(get_tracking_entries)
+                    except Exception as e:
+                        st.write("Fehler beim Leeren des Caches:", e)
                     updated_entries = get_tracking_entries()
                     df_new = pd.DataFrame(updated_entries)
                     df_new["date"] = pd.to_datetime(df_new["date"], errors="coerce").dt.tz_localize(None)
