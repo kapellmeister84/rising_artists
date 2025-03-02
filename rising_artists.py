@@ -15,10 +15,10 @@ st.set_page_config(layout="wide")
 set_dark_mode()
 set_background("https://wallpapershome.com/images/pages/pic_h/26334.jpg")
 
-# Globale Log-Liste
+# Globale Log-Liste (nicht im Session-State, sondern als globale Variable)
 LOG_MESSAGES = []
 
-# Log in der Sidebar in einem scrollbaren Expander
+# Log in der Sidebar in einem scrollbaren Expander anzeigen
 with st.sidebar.expander("Log-Details", expanded=True):
     log_placeholder = st.empty()
 
@@ -106,9 +106,8 @@ def parse_rollup_text(rollup):
                     texts.append(date_info["start"])
     return " ".join(texts).strip()
 
-# In Funktionen, die in Threads laufen, log() entfernen:
+# Keine log()-Aufrufe in dieser Funktion, da sie von einem Cache-Thread aufgerufen wird.
 def get_track_name_from_page(page_id):
-    # Log-Aufruf entfernt, um NoSessionContext zu vermeiden
     url = f"{notion_page_endpoint}/{page_id}"
     response = requests.get(url, headers=notion_headers)
     if response.status_code == 200:
@@ -168,7 +167,7 @@ def get_spotify_data(spotify_track_id):
 
 @st.cache_data(show_spinner=False)
 def get_metadata_from_tracking_db():
-    log("Lade Notion-Metadaten...")
+    # Log-Aufrufe entfernt, um Cache-Probleme zu vermeiden.
     url = f"{notion_query_endpoint}/{tracking_db_id}/query"
     payload = {"page_size": 100}
     pages = []
@@ -180,13 +179,11 @@ def get_metadata_from_tracking_db():
         try:
             response = requests.post(url, headers=notion_headers, json=payload)
             if response.status_code == 429:
-                log("Notion Rate Limit erreicht, warte 5 Sekunden...")
                 time.sleep(5)
                 continue
             response.raise_for_status()
         except requests.exceptions.HTTPError as e:
-            log(f"HTTPError beim Laden von Notion-Metadaten: {e}")
-            raise
+            raise e
         data = response.json()
         pages.extend(data.get("results", []))
         has_more = data.get("has_more", False)
@@ -223,7 +220,6 @@ def get_metadata_from_tracking_db():
             "release_date": release_date,
             "spotify_track_id": spotify_track_id
         }
-    log("Notion-Metadaten geladen.")
     return metadata
 
 def get_tracking_entries():
@@ -242,13 +238,11 @@ def get_tracking_entries():
         try:
             response = requests.post(url, headers=notion_headers, json=payload)
             if response.status_code == 429:
-                log("Notion Rate Limit beim Laden Tracking-Daten, warte 5 Sekunden...")
                 time.sleep(5)
                 continue
             response.raise_for_status()
         except requests.exceptions.HTTPError as e:
-            log(f"HTTPError beim Laden Tracking-Daten: {e}")
-            raise
+            raise e
         data = response.json()
         pages.extend(data.get("results", []))
         has_more = data.get("has_more", False)
@@ -642,4 +636,3 @@ Popularity: {row['last_popularity']:.1f} | Streams: {row['last_streams']} | Hype
 else:
     if not df.empty:
         st.write("Bitte benutze das Filterformular in der Sidebar, um Ergebnisse anzuzeigen.")
-        
