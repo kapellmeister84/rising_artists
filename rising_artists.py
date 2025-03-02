@@ -84,7 +84,7 @@ def update_streams_for_measurement(entry_id, streams):
     response = requests.patch(url, headers=notion_headers, json=payload)
     response.raise_for_status()
 
-# Verwende Caching mit TTL von 300 Sekunden (5 Minuten) für schnelleren Start
+# Caching mit TTL von 300 Sekunden (5 Minuten) für dynamische Daten
 @st.cache_data(ttl=300, show_spinner=False)
 def get_all_tracking_pages():
     url = f"{notion_query_endpoint}/{tracking_db_id}/query"
@@ -92,15 +92,21 @@ def get_all_tracking_pages():
     pages = []
     has_more = True
     start_cursor = None
+    retry_delay = 1
     while has_more:
         if start_cursor:
             payload["start_cursor"] = start_cursor
         response = requests.post(url, headers=notion_headers, json=payload)
+        if response.status_code == 429:
+            time.sleep(retry_delay)
+            retry_delay *= 2
+            continue
         response.raise_for_status()
         data = response.json()
         pages.extend(data.get("results", []))
         has_more = data.get("has_more", False)
         start_cursor = data.get("next_cursor")
+        retry_delay = 1
     return pages
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -127,9 +133,6 @@ def get_tracking_entries():
 
 @st.cache_data(ttl=300, show_spinner=False)
 def get_spotify_data(spotify_track_id):
-    # Stelle sicher, dass spotify_track_id ein nicht-leerer String ist.
-    if not isinstance(spotify_track_id, str) or not spotify_track_id.strip():
-        return "", ""
     url = f"https://api.spotify.com/v1/tracks/{spotify_track_id}"
     response = requests.get(url, headers={"Authorization": f"Bearer {SPOTIFY_TOKEN}"})
     if response.status_code == 200:
@@ -141,7 +144,8 @@ def get_spotify_data(spotify_track_id):
         return cover_url, spotify_link
     return "", ""
 
-@st.cache_data(ttl=300, show_spinner=False)
+# Metadaten (Artist, Songname etc.) werden dauerhaft gecached, da sie sich nicht ändern
+@st.cache_data(show_spinner=False)
 def get_metadata_from_tracking_db():
     pages = get_all_tracking_pages()
     metadata = {}
@@ -195,7 +199,7 @@ def get_spotify_playcount(track_id, token):
     data = response.json()
     return int(data["data"]["trackUnion"].get("playcount", 0))
 
-# --- Platzhalterfunktionen für Buttons ---
+# --- Funktionen für Buttons ---
 def get_new_music():
     st.write("Rufe neue Musik aus Playlisten ab...")
     progress_bar = st.progress(0)
@@ -238,7 +242,7 @@ def update_popularity():
     progress_bar = st.progress(0)
     status_text = st.empty()
     
-    week_database_id = tracking_db_id  # Verwende die Tracking-Datenbank
+    week_database_id = tracking_db_id  # Tracking-Datenbank
     
     def get_song_name(page_id):
         url = f"{notion_page_endpoint}/{page_id}"
@@ -355,7 +359,6 @@ def update_popularity():
         if spotify_track_id:
             try:
                 streams = get_spotify_playcount(spotify_track_id, SPOTIFY_TOKEN)
-                # Zweiter Versuch, falls 0 Streams:
                 if streams == 0:
                     time.sleep(1)
                     streams = get_spotify_playcount(spotify_track_id, SPOTIFY_TOKEN)
