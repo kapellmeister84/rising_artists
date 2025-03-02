@@ -193,7 +193,9 @@ with st.sidebar:
         filter_growth_threshold = st.number_input("Min. Growth % (zwischen den letzten beiden Messungen)", min_value=0.0, value=0.0, step=0.5, key="filter_growth")
         filter_sort_option = st.selectbox("Sortiere nach", ["Popularity", "Release Date"], key="filter_sort")
         filter_timeframe_option = st.selectbox("Zeitraum für Graphen (Ende)", ["3 Tage", "1 Woche", "2 Wochen", "3 Wochen"], key="filter_timeframe")
-        filter_timeframe_days = {"3 Tage": 3, "1 Woche": 7, "2 Wochen": 14, "
+        filter_timeframe_days = {"3 Tage": 3, "1 Woche": 7, "2 Wochen": 14, "3 Wochen": 21}
+        filter_days = filter_timeframe_days[filter_timeframe_option]
+        submitted = st.form_submit_button("Filter anwenden")
 
 st.title("ARTIST SCOUT 1.0b")
 st.header("Top 10 songs to watch")
