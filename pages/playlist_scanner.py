@@ -316,6 +316,8 @@ def update_popularity():
             comparison = f"(Vergleich: {prev} -> {curr})"
         else:
             growth = 0
+            prev = "N/A"
+            curr = "N/A"
             comparison = "(keine Vergleichsdaten)"
         latest_entry_id = group.iloc[-1]["entry_id"]
         st.write(f"Song {song_id}: Growth = {growth:.1f}% {comparison}")
