@@ -10,11 +10,11 @@ st.set_page_config(layout="wide")
 #########################
 # Notion-Konfiguration  #
 #########################
-# Neue Datenbankversion
+# Neue Datenbankversion: "song-database" für Songs
 songs_database_id = st.secrets["notion"]["song-database"]
-# measurements-database wird hier nicht direkt abgefragt, da die Messdaten über das Relation-Property verknüpft sind
 notion_secret = st.secrets["notion"]["secret"]
 
+# Endpunkt und Header für Notion
 notion_query_endpoint = "https://api.notion.com/v1/databases"
 notion_page_endpoint = "https://api.notion.com/v1/pages"
 notion_headers = {
@@ -24,11 +24,12 @@ notion_headers = {
 }
 
 #########################
-# Hilfsfunktion: Measurement-Daten abfragen
+# Caching von Notion-Daten
 #########################
+@st.cache_data(show_spinner=False)
 def get_measurement_details(measurement_id):
     """
-    Fragt für eine gegebene Measurement-Seite (ID) die Details ab.
+    Ruft für eine gegebene Measurement-Seite (ID) die Details ab.
     Erwartete Properties in der Measurements-Datenbank:
       - Song Pop (number)
       - Artist Pop (number)
@@ -49,9 +50,6 @@ def get_measurement_details(measurement_id):
         "artist_followers": props.get("Artist Followers", {}).get("number")
     }
 
-#########################
-# Songs-Metadaten laden und cachen
-#########################
 @st.cache_data(show_spinner=False)
 def get_songs_metadata():
     """
@@ -62,7 +60,7 @@ def get_songs_metadata():
       - Track ID (rich_text)
       - Release Date (date)
       - Country Code (rich_text)
-      - Measurements (relation) – für jeden verknüpften Eintrag werden die Measurement-Details abgefragt
+      - Measurements (relation) – Für jeden verknüpften Eintrag werden die Measurement-Details abgefragt.
     """
     url = f"{notion_query_endpoint}/{songs_database_id}/query"
     payload = {"page_size": 100}
@@ -81,7 +79,6 @@ def get_songs_metadata():
         start_cursor = data.get("next_cursor")
 
     metadata = {}
-    # Verwende einen ThreadPool, um für Seiten mit Measurements die Details parallel abzurufen.
     with ThreadPoolExecutor() as executor:
         measurement_futures = {}
         for page in pages:
@@ -117,17 +114,16 @@ def get_songs_metadata():
             if "Country Code" in props and props["Country Code"].get("rich_text"):
                 country_code = "".join([t.get("plain_text", "") for t in props["Country Code"]["rich_text"]]).strip()
 
-            # Measurements: falls vorhanden, wird erwartet, dass es sich um eine Relation handelt.
-            measurements_data = []
+            # Measurements Relation
+            measurements_ids = []
             if "Measurements" in props and props["Measurements"].get("relation"):
-                rels = props["Measurements"]["relation"]
-                for rel in rels:
-                    measurement_id = rel.get("id")
-                    if measurement_id:
-                        # Starte parallel eine Abfrage für diese Measurement-Seite
-                        measurement_futures[measurement_id] = executor.submit(get_measurement_details, measurement_id)
-            # Wir speichern hier vorerst die IDs der zugehörigen Measurement-Seiten;
-            # später werden die abgefragten Details ergänzt.
+                for rel in props["Measurements"]["relation"]:
+                    m_id = rel.get("id")
+                    if m_id:
+                        measurements_ids.append(m_id)
+                        # Starte parallel die Abfrage der Measurement-Details
+                        measurement_futures[m_id] = executor.submit(get_measurement_details, m_id)
+
             key = track_id if track_id else page.get("id")
             metadata[key] = {
                 "page_id": page.get("id"),
@@ -137,15 +133,16 @@ def get_songs_metadata():
                 "track_id": track_id,
                 "release_date": release_date,
                 "country_code": country_code,
-                "measurements_ids": [rel.get("id") for rel in props.get("Measurements", {}).get("relation", [])]
+                "measurements_ids": measurements_ids
             }
-        # Warte auf alle parallelen Abfragen und füge die Measurement-Details hinzu
+
+        # Füge die Measurement-Details hinzu
         for measurement_id, future in measurement_futures.items():
             try:
                 details = future.result()
             except Exception as e:
                 details = {"song_pop": None, "artist_pop": None, "streams": None, "monthly_listeners": None, "artist_followers": None}
-            # Füge die Details zu allen Songs hinzu, die diese Measurement-ID in ihrer Liste haben
+            # Suche alle Songs, die diese Measurement-ID besitzen und ergänze die Daten
             for key, song_data in metadata.items():
                 if measurement_id in song_data.get("measurements_ids", []):
                     if "measurements" not in song_data:
@@ -153,7 +150,7 @@ def get_songs_metadata():
                     song_data["measurements"].append({ "id": measurement_id, **details })
     return metadata
 
-# Laden der Songs-Metadaten aus der Notion-Songs-Datenbank (inkl. Measurements)
+# Laden der Songs-Metadaten inklusive Measurements aus der Notion-Songs-Datenbank
 songs_metadata = get_songs_metadata()
 st.title("Songs Metadata from Notion (with Measurements)")
 st.write("Loaded songs metadata:")
