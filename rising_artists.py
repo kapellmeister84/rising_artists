@@ -16,9 +16,9 @@ st.set_page_config(layout="wide")
 
 set_background("https://wallpapershome.com/images/pages/pic_h/26334.jpg")
 
+
 # === Notion-Konfiguration ===
 tracking_db_id = "1a9b6204cede80e29338ede2c76999f2"  # Tracking-Datenbank (enthält Rollups für "Artist" und "Release Date", Relation "Song")
-songs_database_id = "1a9b6204cede8006b67fd247dc660ba4"  # Songs-Datenbank
 notion_secret = "secret_yYvZbk7zcKy0Joe3usdCHMbbZmAFHnCKrF7NvEkWY6E"
 notion_query_endpoint = "https://api.notion.com/v1/databases"
 notion_page_endpoint = "https://api.notion.com/v1/pages"
@@ -166,51 +166,6 @@ def get_metadata_from_tracking_db():
         }
     return metadata
 
-# --- Cleanup-Funktion (nach Definition aller benötigten Funktionen) ---
-def cleanup_old_songs():
-    """
-    Archiviert alle Songs, die seit mindestens 3 Wochen getrackt werden.
-    """
-    st.write("Bereinige alte Songs ...")
-    try:
-        st.cache_data.clear(get_all_tracking_pages)
-    except Exception as e:
-        st.write("Fehler beim Leeren des Caches (get_all_tracking_pages):", e)
-    try:
-        st.cache_data.clear(get_tracking_entries)
-    except Exception as e:
-        st.write("Fehler beim Leeren des Caches (get_tracking_entries):", e)
-    
-    entries = get_tracking_entries()
-    if not entries:
-        return
-    df = pd.DataFrame(entries)
-    df["date"] = pd.to_datetime(df["date"], errors="coerce")
-    df = df.dropna(subset=["date", "song_id"])
-    now = datetime.datetime.now()
-    for song_id, group in df.groupby("song_id"):
-        min_date = group["date"].min()
-        if (now - min_date).days >= 21:
-            st.write(f"Song {song_id} wird archiviert (getrackt seit {(now - min_date).days} Tagen).")
-            for entry in group["entry_id"]:
-                try:
-                    archive_page(entry)
-                except Exception as e:
-                    st.write(f"Fehler beim Archivieren von Tracking-Eintrag {entry}: {e}")
-            try:
-                archive_page(song_id)
-            except Exception as e:
-                st.write(f"Fehler beim Archivieren der Song-Seite {song_id}: {e}")
-
-def archive_page(page_id):
-    url = f"{notion_page_endpoint}/{page_id}"
-    payload = {"archived": True}
-    response = requests.patch(url, headers=notion_headers, json=payload)
-    response.raise_for_status()
-
-# --- Cleanup beim Start ausführen ---
-cleanup_old_songs()
-
 # --- Platzhalterfunktionen für Buttons ---
 def get_new_music():
     st.write("Rufe neue Musik aus Playlisten ab...")
@@ -231,7 +186,7 @@ def update_popularity():
     status_text = st.empty()
     
     songs_database_id = "1a9b6204cede8006b67fd247dc660ba4"
-    week_database_id = tracking_db_id  # Wir nutzen hier die Tracking-Datenbank
+    week_database_id = "1a9b6204cede80e29338ede2c76999f2"
 
     def get_all_song_page_ids():
         url = f"{notion_query_endpoint}/{songs_database_id}/query"
@@ -316,15 +271,12 @@ def update_popularity():
     st.success("Popularity wurde aktualisiert!")
     status_text.empty()
     
+    # Growth-Berechnung: Für jeden Song werden die beiden neuesten Messwerte verglichen und der Growth-Wert
+    # wird in den neuesten Eintrag geschrieben.
     st.write("Berechne Growth für jeden Song...")
-    try:
-        st.cache_data.clear(get_all_tracking_pages)
-    except Exception as e:
-        st.write("Fehler beim Leeren des Caches (get_all_tracking_pages):", e)
-    try:
-        st.cache_data.clear(get_tracking_entries)
-    except Exception as e:
-        st.write("Fehler beim Leeren des Caches (get_tracking_entries):", e)
+    # Cache leeren, um die aktuellsten Daten zu erhalten:
+    get_all_tracking_pages.clear()
+    get_tracking_entries.clear()
     updated_entries = get_tracking_entries()
     df_update = pd.DataFrame(updated_entries)
     df_update["date"] = pd.to_datetime(df_update["date"], errors="coerce")
@@ -349,14 +301,8 @@ with st.sidebar:
     if st.button("Update Popularity"):
         update_popularity()
     if st.button("Refresh Daten"):
-        try:
-            st.cache_data.clear(get_all_tracking_pages)
-        except Exception as e:
-            st.write("Fehler beim Leeren des Caches (get_all_tracking_pages):", e)
-        try:
-            st.cache_data.clear(get_tracking_entries)
-        except Exception as e:
-            st.write("Fehler beim Leeren des Caches (get_tracking_entries):", e)
+        get_all_tracking_pages.clear()
+        get_tracking_entries.clear()
         st.experimental_rerun()
     st.markdown("---")
     with st.form("filter_form"):
@@ -369,9 +315,10 @@ with st.sidebar:
         filter_days = filter_timeframe_days[filter_timeframe_option]
         submitted = st.form_submit_button("Filter anwenden")
 
-st.title("Song Tracking Übersicht")
+st.title("ARTIST SCOUT 1.0b")
 
-st.header("Top 10 Songs – Wachstum über alle Messungen")
+# 1. Oben: Top 10 Songs – Wachstum über alle Messungen
+st.header("Top 10 songs to watch")
 
 tracking_entries = get_tracking_entries()
 metadata = get_metadata_from_tracking_db()
@@ -440,11 +387,8 @@ for row_df in rows:
             show_graph = st.checkbox("Graph anzeigen / ausblenden", key=f"toggle_{row['song_id']}")
             if show_graph:
                 with st.spinner("Graph wird geladen..."):
-                    try:
-                        st.cache_data.clear(get_all_tracking_pages)
-                        st.cache_data.clear(get_tracking_entries)
-                    except Exception as e:
-                        st.write("Fehler beim Leeren des Caches:", e)
+                    get_all_tracking_pages.clear()
+                    get_tracking_entries.clear()
                     updated_entries = get_tracking_entries()
                     df_new = pd.DataFrame(updated_entries)
                     df_new["date"] = pd.to_datetime(df_new["date"], errors="coerce").dt.tz_localize(None)
@@ -461,6 +405,7 @@ for row_df in rows:
                     fig.update_yaxes(range=[0, 100])
                     st.plotly_chart(fig, use_container_width=True, key=f"chart_{row['song_id']}_{time.time()}")
                     
+# 2. Unterhalb: Filterergebnisse
 st.header("Songs filtern")
 if submitted:
     last_data = []
