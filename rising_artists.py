@@ -186,7 +186,21 @@ def get_spotify_playcount(track_id, token):
     data = response.json()
     return int(data["data"]["trackUnion"].get("playcount", 0))
 
-# --- Funktion zum Abrufen aller Song-Seiten aus der Songs-Datenbank (Pagination) ---
+# --- Platzhalterfunktionen für Buttons ---
+def get_new_music():
+    st.write("Rufe neue Musik aus Playlisten ab...")
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    song_list = ["Song A", "Song B", "Song C", "Song D", "Song E"]
+    for i, song in enumerate(song_list):
+        status_text.text(f"Rufe {song} ab...")
+        time.sleep(1)
+        progress_bar.progress((i + 1) / len(song_list))
+    st.success("Neue Musik wurde hinzugefügt!")
+    st.session_state.get_new_music_week = datetime.datetime.now().isocalendar()[1]
+    status_text.empty()
+
+# Funktion zum Abrufen aller Song-Seiten aus der Songs-Datenbank (mit Pagination)
 def get_all_song_page_ids():
     url = f"{notion_query_endpoint}/{songs_database_id}/query"
     payload = {"page_size": 100}
@@ -210,20 +224,6 @@ def get_all_song_page_ids():
             popularity = page["properties"]["Popularity"].get("number", 0)
         song_pages.append({"page_id": page_id, "popularity": popularity})
     return song_pages
-
-# --- Platzhalterfunktionen für Buttons ---
-def get_new_music():
-    st.write("Rufe neue Musik aus Playlisten ab...")
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    song_list = ["Song A", "Song B", "Song C", "Song D", "Song E"]
-    for i, song in enumerate(song_list):
-        status_text.text(f"Rufe {song} ab...")
-        time.sleep(1)
-        progress_bar.progress((i + 1) / len(song_list))
-    st.success("Neue Musik wurde hinzugefügt!")
-    st.session_state.get_new_music_week = datetime.datetime.now().isocalendar()[1]
-    status_text.empty()
 
 def update_popularity():
     st.write("Füge neue Popularity-Messung hinzu...")
@@ -277,7 +277,7 @@ def update_popularity():
         }
         requests.post(notion_page_endpoint, headers=notion_headers, json=payload)
 
-    # Verwende die globale Funktion, um alle Song-Seiten abzurufen (Pagination)
+    # Alle Song-Seiten (mit Pagination) abrufen:
     song_pages = get_all_song_page_ids()
     total = len(song_pages)
     song_to_track = {}
@@ -303,8 +303,9 @@ def update_popularity():
     status_text.empty()
     
     st.write("Berechne Growth für jeden Song...")
-    st.cache_data.clear(get_all_tracking_pages)
-    st.cache_data.clear(get_tracking_entries)
+    # Cache leeren – direkter Aufruf der clear()-Methoden:
+    get_all_tracking_pages.clear()
+    get_tracking_entries.clear()
     updated_entries = get_tracking_entries()
     df_update = pd.DataFrame(updated_entries)
     df_update["date"] = pd.to_datetime(df_update["date"], errors="coerce")
@@ -322,8 +323,8 @@ def update_popularity():
         update_growth_for_measurement(latest_entry_id, growth)
     
     st.write("Aktualisiere Streams für jeden Song...")
-    st.cache_data.clear(get_all_tracking_pages)
-    st.cache_data.clear(get_tracking_entries)
+    get_all_tracking_pages.clear()
+    get_tracking_entries.clear()
     updated_entries = get_tracking_entries()
     df_update = pd.DataFrame(updated_entries)
     df_update["date"] = pd.to_datetime(df_update["date"], errors="coerce")
@@ -345,6 +346,7 @@ def update_popularity():
         st.write(f"Song {song_id}: Streams = {streams}")
         update_streams_for_measurement(latest_entry_id, streams)
 
+# --- Neue Funktion: Streams von Spotify abrufen ---
 def get_spotify_playcount(track_id, token):
     variables = json.dumps({"uri": f"spotify:track:{track_id}"})
     extensions = json.dumps({
@@ -369,8 +371,8 @@ with st.sidebar:
     if st.button("Update Popularity"):
         update_popularity()
     if st.button("Refresh Daten"):
-        st.cache_data.clear(get_all_tracking_pages)
-        st.cache_data.clear(get_tracking_entries)
+        get_all_tracking_pages.clear()
+        get_tracking_entries.clear()
         st.experimental_rerun()
     st.markdown("---")
     with st.form("filter_form"):
@@ -454,8 +456,8 @@ for row_df in rows:
             if show_graph:
                 with st.spinner("Graph wird geladen..."):
                     try:
-                        st.cache_data.clear(get_all_tracking_pages)
-                        st.cache_data.clear(get_tracking_entries)
+                        get_all_tracking_pages.clear()
+                        get_tracking_entries.clear()
                     except Exception as e:
                         st.write("Fehler beim Leeren des Caches:", e)
                     updated_entries = get_tracking_entries()
