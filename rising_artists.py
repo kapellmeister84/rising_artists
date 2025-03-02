@@ -16,7 +16,7 @@ set_dark_mode()
 set_background("https://wallpapershome.com/images/pages/pic_h/26334.jpg")
 
 # === Notion-Konfiguration ===
-tracking_db_id = st.secrets["notion"]["tracking_db_id"]      # Weeks-/Tracking-Datenbank
+tracking_db_id = st.secrets["notion"]["tracking_db_id"]      # Tracking-Datenbank für Songs
 songs_database_id = st.secrets["notion"]["songs_db_id"]        # Songs-Datenbank
 notion_secret = st.secrets["notion"]["token"]
 notion_query_endpoint = "https://api.notion.com/v1/databases"
@@ -37,19 +37,35 @@ def get_spotify_token():
     response.raise_for_status()
     return response.json().get("accessToken")
 
-# Beim Start den Token holen und global setzen
+# Spotify-Token und Header global setzen
 SPOTIFY_TOKEN = get_spotify_token()
 global SPOTIFY_HEADERS
 SPOTIFY_HEADERS = {"Authorization": f"Bearer {SPOTIFY_TOKEN}"}
 
 def get_spotify_popularity(track_id, token):
-    """Holt den echten Spotify-Popularity-Wert (0–100) für einen Track."""
     url = f"https://api.spotify.com/v1/tracks/{track_id}"
     headers = {"Authorization": f"Bearer {token}"}
     response = requests.get(url, headers=headers)
     response.raise_for_status()
     data = response.json()
     return data.get("popularity", 0)
+
+def get_spotify_playcount(track_id, token):
+    variables = json.dumps({"uri": f"spotify:track:{track_id}"})
+    extensions = json.dumps({
+        "persistedQuery": {
+            "version": 1,
+            "sha256Hash": "26cd58ab86ebba80196c41c3d48a4324c619e9a9d7df26ecca22417e0c50c6a4"
+        }
+    })
+    params = {"operationName": "getTrack", "variables": variables, "extensions": extensions}
+    token_value = SPOTIFY_HEADERS['Authorization'].split()[1]
+    headers = {"Authorization": f"Bearer {token_value}"}
+    url = "https://api-partner.spotify.com/pathfinder/v1/query"
+    response = requests.get(url, headers=headers, params=params)
+    response.raise_for_status()
+    data = response.json()
+    return int(data["data"]["trackUnion"].get("playcount", 0))
 
 def parse_rollup_text(rollup):
     texts = []
@@ -84,9 +100,9 @@ def get_track_id_from_page(page_id):
             return "".join([t.get("plain_text", "") for t in text_prop]).strip()
     return ""
 
-def update_growth_for_measurement(entry_id, growth):
+def update_hype_for_measurement(entry_id, hype_score):
     url = f"{notion_page_endpoint}/{entry_id}"
-    payload = {"properties": {"Growth": {"number": growth}}}
+    payload = {"properties": {"Hype Score": {"number": hype_score}}}
     response = requests.patch(url, headers=notion_headers, json=payload)
     response.raise_for_status()
 
@@ -96,27 +112,16 @@ def update_streams_for_measurement(entry_id, streams):
     response = requests.patch(url, headers=notion_headers, json=payload)
     response.raise_for_status()
 
-# Angepasst: Playcount-Daten werden jetzt analog zum Playlist Scanner abgerufen
-def get_spotify_playcount(track_id, token):
-    variables = json.dumps({"uri": f"spotify:track:{track_id}"})
-    extensions = json.dumps({
-        "persistedQuery": {
-            "version": 1,
-            "sha256Hash": "26cd58ab86ebba80196c41c3d48a4324c619e9a9d7df26ecca22417e0c50c6a4"
-        }
-    })
-    params = {"operationName": "getTrack", "variables": variables, "extensions": extensions}
-    # Nutze den globalen SPOTIFY_HEADERS für den Token
-    token_value = SPOTIFY_HEADERS['Authorization'].split()[1]
-    headers = {"Authorization": f"Bearer {token_value}"}
-    url = "https://api-partner.spotify.com/pathfinder/v1/query"
-    response = requests.get(url, headers=headers, params=params)
+def update_artist_info_for_measurement(entry_id, artist_data):
+    url = f"{notion_page_endpoint}/{entry_id}"
+    payload = {"properties": {
+        "Artist ID": {"rich_text": [{"text": {"content": artist_data.get("id", "")}}]},
+        "Artist Popularity": {"number": artist_data.get("popularity", 0)}
+    }}
+    response = requests.patch(url, headers=notion_headers, json=payload)
     response.raise_for_status()
-    data = response.json()
-    return int(data["data"]["trackUnion"].get("playcount", 0))
 
 def get_spotify_data(spotify_track_id):
-    """Nur für Cover und externen Link."""
     url = f"https://api.spotify.com/v1/tracks/{spotify_track_id}"
     response = requests.get(url, headers={"Authorization": f"Bearer {SPOTIFY_TOKEN}"})
     if response.status_code == 200:
@@ -207,8 +212,8 @@ def get_tracking_entries():
         props = page.get("properties", {})
         pop = props.get("Popularity Score", {}).get("number")
         date_str = props.get("Date", {}).get("date", {}).get("start")
-        growth = props.get("Growth", {}).get("number")
         streams_val = props.get("Streams", {}).get("number")
+        hype = props.get("Hype Score", {}).get("number")
         song_relations = props.get("Song", {}).get("relation", [])
         for relation in song_relations:
             song_id = relation.get("id")
@@ -217,8 +222,8 @@ def get_tracking_entries():
                 "song_id": song_id,
                 "date": date_str,
                 "popularity": pop,
-                "growth": growth,
-                "Streams": streams_val
+                "Streams": streams_val,
+                "hype_score": hype
             })
     st.session_state.tracking_entries = entries
     return entries
@@ -267,15 +272,15 @@ def get_tracking_entries_for_song(song_id):
          props = page.get("properties", {})
          pop = props.get("Popularity Score", {}).get("number")
          date_str = props.get("Date", {}).get("date", {}).get("start")
-         growth = props.get("Growth", {}).get("number")
          streams_val = props.get("Streams", {}).get("number")
+         hype = props.get("Hype Score", {}).get("number")
          entries.append({
               "entry_id": entry_id,
               "song_id": song_id,
               "date": date_str,
               "popularity": pop,
-              "growth": growth,
-              "Streams": streams_val
+              "Streams": streams_val,
+              "hype_score": hype
          })
     return entries
 
@@ -311,32 +316,19 @@ def create_week_entry(song_page_id, popularity_score, track_id):
     }
     requests.post(notion_page_endpoint, headers=notion_headers, json=payload)
 
-def get_new_music():
-    st.write("Rufe neue Musik aus Playlisten ab...")
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    song_list = ["Song A", "Song B", "Song C", "Song D", "Song E"]
-    for i, song in enumerate(song_list):
-        status_text.text(f"Rufe {song} ab...")
-        time.sleep(1)
-        progress_bar.progress((i + 1) / len(song_list))
-    st.success("Neue Musik wurde hinzugefügt!")
-    st.session_state.get_new_music_week = datetime.datetime.now().isocalendar()[1]
-    status_text.empty()
-
 def update_popularity():
-    st.write("Führe Tracking-Daten-Aktualisierung durch...")
+    st.write("Aktualisiere Popularity, Streams und Hype Score …")
     progress_bar = st.progress(0)
     status_text = st.empty()
     
     spotify_token = get_spotify_token()
     song_pages = get_all_song_page_ids()
     total = len(song_pages)
-
-    # Globales Update: Für jeden Song wird der aktuelle Popularity-Wert von Spotify geholt
+    
+    # Für jeden Song den aktuellen Popularity-Wert von Spotify abrufen und in Notion als neuen Wochen-Eintrag anlegen
     for idx, song in enumerate(song_pages):
         page_id = song["page_id"]
-        status_text.text(f"Verarbeite Seite: {page_id}")
+        status_text.text(f"Verarbeite Song: {page_id}")
         track_id = get_track_id_from_page(page_id)
         if not track_id:
             track_id = str(uuid.uuid4())
@@ -345,42 +337,15 @@ def update_popularity():
         except Exception as e:
             st.write(f"Fehler bei Track ID {track_id}: {e}")
             spotify_pop = 0
-
         create_week_entry(page_id, spotify_pop, track_id)
         progress_bar.progress(int((idx + 1) / total * 100))
     
-    status_text.text("Basis-Popularity aktualisiert. Jetzt Growth und Streams...")
+    status_text.text("Popularity aktualisiert. Jetzt Streams und Hype Score …")
     
-    # Growth berechnen
+    # Für jeden Song Streams und Hype Score (plus Artist Info) aktualisieren
     metadata = get_metadata_from_tracking_db()
     song_ids = list(metadata.keys())
-    growth_progress = st.progress(0)
-    total_groups = len(song_ids)
-    for idx, song_id in enumerate(song_ids):
-        fresh_entries = get_tracking_entries_for_song(song_id)
-        if not fresh_entries:
-            growth = 0
-        else:
-            df_song = pd.DataFrame(fresh_entries)
-            df_song["date"] = pd.to_datetime(df_song["date"], errors="coerce")
-            df_song = df_song.dropna(subset=["date"]).sort_values("date")
-            if len(df_song) >= 2:
-                prev = df_song.iloc[-2]["popularity"]
-                curr = df_song.iloc[-1]["popularity"]
-                if prev and prev != 0 and not isnan(prev):
-                    growth = ((curr - prev) / prev) * 100
-                else:
-                    growth = 0
-            else:
-                growth = 0
-        if fresh_entries:
-            latest_entry_id = fresh_entries[-1]["entry_id"]
-            update_growth_for_measurement(latest_entry_id, growth)
-        growth_progress.progress((idx + 1) / total_groups)
-    
-    # Streams aktualisieren
-    stream_progress = st.progress(0)
-    total_streams = len(song_ids)
+    total_songs = len(song_ids)
     for idx, song_id in enumerate(song_ids):
         fresh_entries = get_tracking_entries_for_song(song_id)
         if not fresh_entries:
@@ -401,21 +366,24 @@ def update_popularity():
             except Exception as e:
                 streams = 0
         update_streams_for_measurement(latest_entry_id, streams)
-        stream_progress.progress((idx + 1) / total_streams)
+        # Hype Score und Artist-Daten live abrufen
+        artist_name = song_meta.get("artist", "")
+        if artist_name:
+            hype_score, artist_data = update_artist_on_demand(artist_name)
+            update_hype_for_measurement(latest_entry_id, hype_score)
+            update_artist_info_for_measurement(latest_entry_id, artist_data)
+        else:
+            update_hype_for_measurement(latest_entry_id, 0)
+        progress_bar.progress((idx + 1) / total_songs)
     
     st.session_state.tracking_entries = get_tracking_entries()
-    status_text.text("Fertig!")
+    status_text.text("Alle Daten aktualisiert!")
 
-# Neue Funktionen für den Hype Score
+# Neue Funktionen für den Hype Score (Artist-basiert)
 def get_artist_data(artist_name, token):
-    """Sucht den Artist bei Spotify und gibt relevante Daten zurück."""
     search_url = "https://api.spotify.com/v1/search"
     headers = {"Authorization": f"Bearer {token}"}
-    params = {
-        "q": artist_name,
-        "type": "artist",
-        "limit": 1
-    }
+    params = {"q": artist_name, "type": "artist", "limit": 1}
     response = requests.get(search_url, headers=headers, params=params)
     response.raise_for_status()
     data = response.json()
@@ -424,17 +392,13 @@ def get_artist_data(artist_name, token):
         return None
     artist = artists[0]
     return {
+        "id": artist.get("id"),
         "name": artist.get("name"),
         "popularity": artist.get("popularity", 0),
         "followers": artist.get("followers", {}).get("total", 0)
     }
 
 def calculate_hype_score(artist_data):
-    """
-    Berechnet den Hype Score anhand des Popularity-Werts und der Follower-Zahlen.
-    Hype Score = Popularity + (log10(Follower) * 10)
-    Der Score wird maximal auf 100 begrenzt.
-    """
     popularity = artist_data.get("popularity", 0)
     followers = artist_data.get("followers", 0)
     followers_score = math.log10(followers) * 10 if followers > 0 else 0
@@ -442,7 +406,6 @@ def calculate_hype_score(artist_data):
     return round(min(hype, 100), 1)
 
 def update_artist_on_demand(artist_name):
-    """Aktualisiert einzelne Artist-Daten und berechnet den Hype Score."""
     token = get_spotify_token()
     artist_data = get_artist_data(artist_name, token)
     if artist_data:
@@ -451,16 +414,13 @@ def update_artist_on_demand(artist_name):
     return None, None
 
 # ─────────────────────────────────────────
-# ─────────── UI / Darstellung ───────────
-# ─────────────────────────────────────────
+# UI / Darstellung
 st.title("ARTIST SCOUT 1.0b")
-st.header("Top 10 songs to watch")
+st.header("Top 10 Songs to Watch")
 
 with st.sidebar:
     st.markdown("## Automatische Updates")
-    if st.button("Get New Music"):
-        get_new_music()
-    if st.button("Update Popularity"):
+    if st.button("Update Popularity / Streams / Hype Score"):
         update_popularity()
     if st.button("Refresh Daten"):
         if "tracking_entries" in st.session_state:
@@ -471,11 +431,6 @@ with st.sidebar:
     with st.form("filter_form"):
         search_query = st.text_input("Song/Artist Suche", "")
         filter_pop_range = st.slider("Popularity Range (letzter Messwert)", 0, 100, (0, 100), step=1, key="filter_pop")
-        filter_growth_threshold = st.number_input("Min. Growth % (zwischen den letzten beiden Messungen)", min_value=0.0, value=0.0, step=0.5, key="filter_growth")
-        filter_sort_option = st.selectbox("Sortiere nach", ["Popularity", "Release Date"], key="filter_sort")
-        filter_timeframe_option = st.selectbox("Zeitraum für Graphen (Ende)", ["3 Tage", "1 Woche", "2 Wochen", "3 Wochen"], key="filter_timeframe")
-        filter_timeframe_days = {"3 Tage": 3, "1 Woche": 7, "2 Wochen": 14, "3 Wochen": 21}
-        filter_days = filter_timeframe_days[filter_timeframe_option]
         submitted = st.form_submit_button("Filter anwenden")
 
 # Daten laden
@@ -488,9 +443,8 @@ metadata = get_metadata_from_tracking_db()
 df = pd.DataFrame(tracking_entries)
 
 if df.empty:
-    st.write("Tracking-Daten noch nicht aktualisiert. Bitte klicke auf 'Update Popularity'.")
-    # Erstelle ein leeres DataFrame mit den erwarteten Spalten
-    df_all = pd.DataFrame(columns=["entry_id", "song_id", "date", "popularity", "growth", "Streams"])
+    st.write("Tracking-Daten noch nicht aktualisiert. Bitte klicke auf 'Update Popularity / Streams / Hype Score'.")
+    df_all = pd.DataFrame(columns=["entry_id", "song_id", "date", "popularity", "Streams", "hype_score"])
 else:
     df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.tz_localize(None)
     df["track_name"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("track_name", "Unbekannter Track"))
@@ -499,22 +453,16 @@ else:
     df["spotify_track_id"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("spotify_track_id", ""))
     df_all = df[df["date"].notnull()]
 
-# Top 10 Songs mit Hype Score
+# Top 10 Songs mit Graphen für Popularity, Streams und Hype Score
 cumulative = []
 for song_id, group in df_all.groupby("song_id"):
     group = group.sort_values("date")
     if group.empty:
         continue
     last_pop = group.iloc[-1]["popularity"]
-    last_growth = group.iloc[-1].get("growth")
-    if last_growth is None:
-        first_pop = group.iloc[0]["popularity"]
-        cumulative_growth = ((last_pop - first_pop) / first_pop) * 100 if first_pop and first_pop != 0 else 0
-    else:
-        cumulative_growth = last_growth
+    last_streams = group.iloc[-1]["Streams"]
+    last_hype = group.iloc[-1].get("hype_score", 0)
     meta = metadata.get(song_id, {"track_name": "Unbekannter Track", "artist": "Unbekannt", "release_date": "", "spotify_track_id": ""})
-    # Update Artist-Daten on demand für Top 10 Anzeige
-    hype_score, _ = update_artist_on_demand(meta["artist"])
     cumulative.append({
         "song_id": song_id,
         "track_name": meta["track_name"],
@@ -522,8 +470,8 @@ for song_id, group in df_all.groupby("song_id"):
         "release_date": meta["release_date"],
         "spotify_track_id": meta["spotify_track_id"],
         "last_popularity": last_pop,
-        "cumulative_growth": cumulative_growth,
-        "hype_score": hype_score if hype_score is not None else 0
+        "last_streams": last_streams,
+        "last_hype": last_hype
     })
 
 cum_df = pd.DataFrame(cumulative)
@@ -531,7 +479,7 @@ if cum_df.empty:
     st.write("Keine Daten für die Top 10 verfügbar.")
     top10 = pd.DataFrame()
 else:
-    top10 = cum_df[cum_df["cumulative_growth"] > 0].sort_values("cumulative_growth", ascending=False).head(10)
+    top10 = cum_df.sort_values("last_popularity", ascending=False).head(10)
 
 num_columns = 5
 rows = [top10.iloc[i:i+num_columns] for i in range(0, len(top10), num_columns)]
@@ -542,7 +490,7 @@ for row_df in rows:
         if row["spotify_track_id"]:
             cover_url, spotify_link = get_spotify_data(row["spotify_track_id"])
         with cols[idx]:
-            st.markdown(f"{row['track_name']}  \nHype Score: {row['hype_score']}")
+            st.markdown(f"**{row['track_name']}**\nArtist: {row['artist']}\nHype Score: {row['last_hype']}")
             if cover_url and spotify_link:
                 st.markdown(f'<a href="{spotify_link}" target="_blank"><img src="{cover_url}" style="width:100%;" /></a>', unsafe_allow_html=True)
             elif cover_url:
@@ -550,45 +498,23 @@ for row_df in rows:
             else:
                 st.write("Kein Cover")
             st.markdown(f"<div style='text-align: center;'>Release: {row['release_date']}</div>", unsafe_allow_html=True)
-            st.markdown(f"<div style='text-align: center;'>Popularity: {row['last_popularity']:.1f}</div>", unsafe_allow_html=True)
-            st.markdown(f"<div style='text-align: center; font-weight: bold;'>Growth: {row['cumulative_growth']:.1f}%</div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='text-align: center;'>Popularity: {row['last_popularity']:.1f} | Streams: {row['last_streams']}</div>", unsafe_allow_html=True)
             show_graph = st.checkbox("Graph anzeigen / ausblenden", key=f"toggle_{row['song_id']}")
             if show_graph:
-                with st.spinner("Graph wird geladen..."):
+                with st.spinner("Graph wird geladen…"):
                     fresh_entries = get_tracking_entries_for_song(row["song_id"])
                     if fresh_entries:
                         df_new = pd.DataFrame(fresh_entries)
                         df_new["date"] = pd.to_datetime(df_new["date"], errors="coerce").dt.tz_localize(None)
                         song_history = df_new.sort_values("date")
-                        if len(song_history) == 1:
-                            fig = px.scatter(song_history, x="date", y="popularity",
-                                             title=f"{row['track_name']} - {row['artist']}",
-                                             labels={"date": "Datum", "popularity": "Popularity Score"})
-                        else:
-                            fig = px.line(song_history, x="date", y="popularity",
-                                          title=f"{row['track_name']} - {row['artist']}",
-                                          labels={"date": "Datum", "popularity": "Popularity Score"},
-                                          markers=True)
+                        fig = px.line(song_history, x="date", y=["popularity", "Streams", "hype_score"],
+                                      title=f"{row['track_name']} – {row['artist']}",
+                                      labels={"value": "Wert", "variable": "Metrik", "date": "Datum"},
+                                      markers=True)
                         fig.update_yaxes(range=[0, 100])
                         st.plotly_chart(fig, use_container_width=True, key=f"chart_{row['song_id']}_{time.time()}")
-                        
-                        show_streams_graph = st.checkbox("Stream Wachstum anzeigen", key=f"toggle_stream_{row['song_id']}")
-                        if show_streams_graph:
-                            if "Streams" in song_history.columns and not song_history["Streams"].isnull().all():
-                                if len(song_history) == 1:
-                                    fig_stream = px.scatter(song_history, x="date", y="Streams",
-                                                            title=f"{row['track_name']} - Stream Wachstum",
-                                                            labels={"date": "Datum", "Streams": "Streams"})
-                                else:
-                                    fig_stream = px.line(song_history, x="date", y="Streams",
-                                                        title=f"{row['track_name']} - Stream Wachstum",
-                                                        labels={"date": "Datum", "Streams": "Streams"},
-                                                        markers=True)
-                                st.plotly_chart(fig_stream, use_container_width=True, key=f"chart_stream_{row['song_id']}_{time.time()}")
-                            else:
-                                st.write("Keine Stream-Daten verfügbar")
                     else:
-                        st.write("Keine aktuellen Tracking-Daten verfügbar")
+                        st.write("Keine Tracking-Daten verfügbar.")
 
 st.header("Songs filtern")
 if submitted and not df_all.empty:
@@ -599,19 +525,14 @@ if submitted and not df_all.empty:
     for idx, (song_id, group) in enumerate(song_groups):
         group = group.sort_values("date")
         last_pop = group.iloc[-1]["popularity"]
-        growth_val = 0
-        if len(group) >= 2:
-            prev_pop = group.iloc[-2]["popularity"]
-            if prev_pop and prev_pop != 0:
-                growth_val = ((last_pop - prev_pop) / prev_pop) * 100
+        last_streams = group.iloc[-1]["Streams"]
+        last_hype = group.iloc[-1].get("hype_score", 0)
         meta = metadata.get(song_id, {
             "track_name": "Unbekannter Track",
             "artist": "Unbekannt",
             "release_date": "",
             "spotify_track_id": ""
         })
-        # Update Artist-Daten on demand für Suchergebnisse
-        hype_score, _ = update_artist_on_demand(meta["artist"])
         last_data.append({
             "song_id": song_id,
             "track_name": meta.get("track_name", "Unbekannter Track"),
@@ -619,16 +540,15 @@ if submitted and not df_all.empty:
             "release_date": meta.get("release_date", ""),
             "spotify_track_id": meta.get("spotify_track_id", ""),
             "last_popularity": last_pop,
-            "growth": growth_val,
-            "hype_score": hype_score if hype_score is not None else 0
+            "last_streams": last_streams,
+            "last_hype": last_hype
         })
         filter_progress.progress((idx + 1) / total_groups)
     last_df = pd.DataFrame(last_data)
     
     filtered_df = last_df[
         (last_df["last_popularity"] >= filter_pop_range[0]) &
-        (last_df["last_popularity"] <= filter_pop_range[1]) &
-        (last_df["growth"] >= filter_growth_threshold)
+        (last_df["last_popularity"] <= filter_pop_range[1])
     ]
     if search_query:
         sq = search_query.lower()
@@ -636,11 +556,7 @@ if submitted and not df_all.empty:
             filtered_df["track_name"].str.lower().str.contains(sq) |
             filtered_df["artist"].str.lower().str.contains(sq)
         ]
-    if filter_sort_option == "Popularity":
-        filtered_df = filtered_df.sort_values("last_popularity", ascending=False)
-    elif filter_sort_option == "Release Date":
-        filtered_df["release_date_dt"] = pd.to_datetime(filtered_df["release_date"], errors="coerce")
-        filtered_df = filtered_df.sort_values("release_date_dt", ascending=True)
+    filtered_df = filtered_df.sort_values("last_popularity", ascending=False)
     
     st.write("Gefilterte Songs:")
     for idx, row in filtered_df.iterrows():
@@ -650,7 +566,7 @@ if submitted and not df_all.empty:
         with st.container():
             st.markdown(f"""**{row['track_name']}** – {row['artist']}  
 Release Date: {row['release_date']}  
-Popularity: {row['last_popularity']:.1f} | Growth: {row['growth']:.1f}% | Hype Score: {row['hype_score']:.1f}""")
+Popularity: {row['last_popularity']:.1f} | Streams: {row['last_streams']} | Hype Score: {row['last_hype']}""")
             if cover_url:
                 st.image(cover_url, width=100)
             if spotify_link:
@@ -660,13 +576,13 @@ Popularity: {row['last_popularity']:.1f} | Growth: {row['growth']:.1f}% | Hype S
                 if len(song_history) == 1:
                     fig = px.scatter(song_history, x="date", y="popularity",
                                      title=f"{row['track_name']} - {row['artist']}",
-                                     labels={"date": "Datum", "popularity": "Popularity Score"})
+                                     labels={"date": "Datum", "popularity": "Popularity"})
                 else:
-                    fig = px.line(song_history, x="date", y="popularity",
+                    fig = px.line(song_history, x="date", y=["popularity", "Streams", "hype_score"],
                                   title=f"{row['track_name']} - {row['artist']}",
-                                  labels={"date": "Datum", "popularity": "Popularity Score"},
+                                  labels={"value": "Wert", "variable": "Metrik", "date": "Datum"},
                                   markers=True)
                 st.plotly_chart(fig, use_container_width=True, key=f"chart_{row['song_id']}")
 else:
     if not df.empty:
-        st.write("Bitte verwenden Sie das Filterformular in der Sidebar, um Ergebnisse anzuzeigen.")
+        st.write("Bitte benutze das Filterformular in der Sidebar, um Ergebnisse anzuzeigen.")
