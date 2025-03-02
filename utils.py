@@ -24,7 +24,8 @@ def set_background(url: str, overlay_color: str = "rgba(0, 0, 0, 0.5)"):
 
 def set_dark_mode():
     """
-    Erzwingt einen Darkmode für die gesamte Streamlit-App, inkl. Sidebar.
+    Erzwingt einen Darkmode für die gesamte Streamlit-App, inkl. Sidebar und
+    passt die Eingabefelder in der Sidebar an (dunkelgraue Schrift).
     """
     dark_mode_css = """
     <style>
@@ -39,14 +40,17 @@ def set_dark_mode():
         background-color: #0e1117;
         color: #c9d1d9;
     }
-    /* Sidebar anpassen */
+    /* Sidebar Hintergrund und Text */
     [data-testid="stSidebar"] {
         background-color: #0e1117;
         color: #c9d1d9;
     }
-    /* Optional: Überschreibt auch die Textfarbe in der Sidebar */
     [data-testid="stSidebar"] * {
         color: #c9d1d9;
+    }
+    /* Eingabefelder in der Sidebar: Dunkelgraue Schrift */
+    [data-testid="stSidebar"] input {
+        color: #555555 !important;
     }
     </style>
     """
