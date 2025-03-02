@@ -31,8 +31,7 @@ SPOTIFY_CLIENT_ID = st.secrets["spotify"]["client_id"]
 SPOTIFY_CLIENT_SECRET = st.secrets["spotify"]["client_secret"]
 
 def get_spotify_token():
-    # Hier kannst du alternativ den Client-Credentials-Flow einbauen,
-    # wir nutzen hier weiterhin den Web-Player-Endpunkt:
+    # Wir nutzen weiterhin den Web-Player-Endpunkt
     url = "https://open.spotify.com/get_access_token?reason=transport&productType=web_player"
     response = requests.get(url)
     response.raise_for_status()
@@ -85,7 +84,8 @@ def update_streams_for_measurement(entry_id, streams):
     response = requests.patch(url, headers=notion_headers, json=payload)
     response.raise_for_status()
 
-# Keine Caching-Dekoratoren mehr – so werden die Daten stets frisch abgefragt.
+# Verwende Caching mit TTL von 300 Sekunden (5 Minuten) für schnelleren Start
+@st.cache_data(ttl=300, show_spinner=False)
 def get_all_tracking_pages():
     url = f"{notion_query_endpoint}/{tracking_db_id}/query"
     payload = {"page_size": 100}
@@ -96,11 +96,6 @@ def get_all_tracking_pages():
         if start_cursor:
             payload["start_cursor"] = start_cursor
         response = requests.post(url, headers=notion_headers, json=payload)
-        # Falls Rate-Limit erreicht: Warte, bevor du es erneut versuchst
-        if response.status_code == 429:
-            retry_after = int(response.headers.get("Retry-After", 1))
-            time.sleep(retry_after)
-            continue
         response.raise_for_status()
         data = response.json()
         pages.extend(data.get("results", []))
@@ -108,6 +103,7 @@ def get_all_tracking_pages():
         start_cursor = data.get("next_cursor")
     return pages
 
+@st.cache_data(ttl=300, show_spinner=False)
 def get_tracking_entries():
     pages = get_all_tracking_pages()
     entries = []
@@ -129,6 +125,7 @@ def get_tracking_entries():
             })
     return entries
 
+@st.cache_data(ttl=300, show_spinner=False)
 def get_spotify_data(spotify_track_id):
     url = f"https://api.spotify.com/v1/tracks/{spotify_track_id}"
     response = requests.get(url, headers={"Authorization": f"Bearer {SPOTIFY_TOKEN}"})
@@ -141,6 +138,7 @@ def get_spotify_data(spotify_track_id):
         return cover_url, spotify_link
     return "", ""
 
+@st.cache_data(ttl=300, show_spinner=False)
 def get_metadata_from_tracking_db():
     pages = get_all_tracking_pages()
     metadata = {}
@@ -177,7 +175,7 @@ def get_metadata_from_tracking_db():
         }
     return metadata
 
-# --- Spotify-Playcount (Streams) abrufen (ohne Cache) ---
+# Für Playcounts keine Caches – immer aktuell
 def get_spotify_playcount(track_id, token):
     variables = json.dumps({"uri": f"spotify:track:{track_id}"})
     extensions = json.dumps({
@@ -237,7 +235,7 @@ def update_popularity():
     progress_bar = st.progress(0)
     status_text = st.empty()
     
-    week_database_id = tracking_db_id  # Hier wird die Tracking-Datenbank verwendet
+    week_database_id = tracking_db_id  # Verwende die Tracking-Datenbank
     
     def get_song_name(page_id):
         url = f"{notion_page_endpoint}/{page_id}"
@@ -284,7 +282,7 @@ def update_popularity():
         }
         requests.post(notion_page_endpoint, headers=notion_headers, json=payload)
 
-    # Alle Song-Seiten (mit Pagination) abrufen:
+    # Abrufen aller Song-Seiten:
     song_pages = get_all_song_page_ids()
     total = len(song_pages)
     song_to_track = {}
@@ -309,8 +307,8 @@ def update_popularity():
     st.success("Popularity wurde aktualisiert!")
     status_text.empty()
     
-    # Growth-Berechnung mit Fortschrittsbalken
     st.write("Berechne Growth für jeden Song...")
+    # Cache leeren, um frische Daten zu erhalten:
     get_all_tracking_pages.clear()
     get_tracking_entries.clear()
     updated_entries = get_tracking_entries()
@@ -331,7 +329,6 @@ def update_popularity():
             growth = 0
             comparison = "(keine Vergleichsdaten)"
         latest_entry_id = group.iloc[-1]["entry_id"]
-        # Hier erfolgt keine st.write-Ausgabe, sondern nur der Fortschrittsbalken:
         growth_progress.progress((idx + 1) / total_groups)
         update_growth_for_measurement(latest_entry_id, growth)
     
@@ -355,13 +352,13 @@ def update_popularity():
         if spotify_track_id:
             try:
                 streams = get_spotify_playcount(spotify_track_id, SPOTIFY_TOKEN)
+                # Zweiter Versuch, falls 0 Streams:
                 if streams == 0:
                     time.sleep(1)
                     streams = get_spotify_playcount(spotify_track_id, SPOTIFY_TOKEN)
             except Exception as e:
                 streams = 0
-        progress_stream = (idx + 1) / total_streams
-        stream_progress.progress(progress_stream)
+        stream_progress.progress((idx + 1) / total_streams)
         update_streams_for_measurement(latest_entry_id, streams)
 
 def get_spotify_playcount(track_id, token):
