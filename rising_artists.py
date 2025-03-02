@@ -66,24 +66,31 @@ def get_songs_metadata():
         measurement_futures = {}
         for page in pages:
             props = page.get("properties", {})
+            # Track Name
             track_name = ""
             if "Track Name" in props and props["Track Name"].get("title"):
                 track_name = "".join([t.get("plain_text", "") for t in props["Track Name"]["title"]]).strip()
+            # Artist Name
             artist_name = ""
             if "Artist Name" in props and props["Artist Name"].get("rich_text"):
                 artist_name = "".join([t.get("plain_text", "") for t in props["Artist Name"]["rich_text"]]).strip()
+            # Artist ID
             artist_id = ""
             if "Artist ID" in props and props["Artist ID"].get("rich_text"):
                 artist_id = "".join([t.get("plain_text", "") for t in props["Artist ID"]["rich_text"]]).strip()
+            # Track ID
             track_id = ""
             if "Track ID" in props and props["Track ID"].get("rich_text"):
                 track_id = "".join([t.get("plain_text", "") for t in props["Track ID"]["rich_text"]]).strip()
+            # Release Date
             release_date = ""
             if "Release Date" in props and props["Release Date"].get("date"):
                 release_date = props["Release Date"]["date"].get("start", "")
+            # Country Code
             country_code = ""
             if "Country Code" in props and props["Country Code"].get("rich_text"):
                 country_code = "".join([t.get("plain_text", "") for t in props["Country Code"]["rich_text"]]).strip()
+            # Measurements Relation
             measurements_ids = []
             if "Measurements" in props and props["Measurements"].get("relation"):
                 for rel in props["Measurements"]["relation"]:
@@ -117,8 +124,12 @@ def get_songs_metadata():
 songs_metadata = get_songs_metadata()
 
 ######################################
-# Sidebar: Log-Fenster und Fortschrittsbalken
+# Sidebar: Suchfeld, Log-Fenster, Fortschrittsbalken
 ######################################
+st.sidebar.title("Search")
+# Suchfeld: Damit wird die Variable search_query definiert und später im Hauptbereich genutzt
+search_query = st.sidebar.text_input("Search by artist or song:")
+
 if "log_messages" not in st.session_state:
     st.session_state.log_messages = []
 
@@ -321,7 +332,6 @@ def song_exists_in_notion(track_id):
 def group_results_by_artist(results):
     grouped = {}
     for key, song in results.items():
-        # Gruppiere nach artist_id, wenn vorhanden, ansonsten nach artist_name
         group_key = song.get("artist_id") or song.get("artist_name")
         if group_key not in grouped:
             grouped[group_key] = []
@@ -335,11 +345,9 @@ def display_search_results(results):
     st.title("Search Results")
     grouped = group_results_by_artist(results)
     for group_key, songs in grouped.items():
-        # Nutze das erste Lied als Repräsentant für den Künstler
         representative = songs[0]
         artist_name = representative.get("artist_name")
         artist_image = representative.get("latest_measurement", {}).get("artist_image", "")
-        # Baue die Artist-Karte
         artist_card = f"""
         <div style="
             border: 2px solid #1DB954;
@@ -356,10 +364,8 @@ def display_search_results(results):
         </div>
         """
         st.markdown(artist_card, unsafe_allow_html=True)
-        # Liste die Songs des Künstlers als Karten auf
         st.markdown("<div style='display: flex; flex-wrap: wrap;'>", unsafe_allow_html=True)
         for song in songs:
-            # Hole Cover und Spotify-Link
             cover_url = ""
             track_url = ""
             try:
