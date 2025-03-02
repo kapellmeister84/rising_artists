@@ -30,6 +30,9 @@ spotify_client_id = st.secrets["spotify"]["client_id"]
 spotify_client_secret = st.secrets["spotify"]["client_secret"]
 
 def get_spotify_token():
+    """
+    Get a Spotify access token using the Client Credentials Flow.
+    """
     auth_str = f"{spotify_client_id}:{spotify_client_secret}"
     b64_auth_str = base64.b64encode(auth_str.encode()).decode()
     headers = {
@@ -40,6 +43,13 @@ def get_spotify_token():
     response = requests.post("https://accounts.spotify.com/api/token", headers=headers, data=data)
     response.raise_for_status()
     return response.json()["access_token"]
+
+def get_web_spotify_token():
+    """
+    Get a Spotify access token from the web player endpoint.
+    """
+    response = requests.get("https://open.spotify.com/get_access_token?reason=transport&productType=web_player").json()
+    return response["accessToken"]
 
 #########################
 # SONG & MEASUREMENTS   #
@@ -64,7 +74,7 @@ def get_monthly_listeners(artist_id):
         match = re.search(r'([\d\.,]+)\s*(?:Monthly Listeners)', html, re.IGNORECASE)
         if match:
             value = match.group(1)
-            # Remove thousand separators (adjust as needed)
+            # Remove thousand separators
             value = value.replace('.', '').replace(',', '')
             try:
                 return int(value)
@@ -92,7 +102,7 @@ def get_playlist_songs(playlist_id, token):
             available_markets = track.get("album", {}).get("available_markets", [])
             country_code = available_markets[0] if available_markets else ""
             artist_pop = get_artist_popularity(artist_id, token) if artist_id else 0
-            streams = 0  # Will be updated later via playcount
+            streams = 0  # Placeholder, updated later
             songs.append({
                 "song_name": song_name,
                 "artist_name": artist_name,
@@ -232,6 +242,25 @@ def update_measurement_entry(measurement_page_id, song_pop, artist_pop, streams,
     else:
         return f"Error updating measurement: {response.text}"
 
+#########################
+# New: Playcount & Extra Metrics
+#########################
+def get_spotify_playcount(track_id, token):
+    # Use a token from the web player endpoint for this call
+    partner_token = get_web_spotify_token()
+    variables = json.dumps({"uri": f"spotify:track:{track_id}"})
+    extensions = json.dumps({
+        "persistedQuery": {
+            "version": 1,
+            "sha256Hash": "26cd58ab86ebba80196c41c3d48a4324c619e9a9d7df26ecca22417e0c50c6a4"
+        }
+    })
+    params = {"operationName": "getTrack", "variables": variables, "extensions": extensions}
+    headers = {"Authorization": f"Bearer {partner_token}"}
+    response = requests.get("https://api-partner.spotify.com/pathfinder/v1/query", headers=headers, params=params)
+    response.raise_for_status()
+    return int(response.json()["data"]["trackUnion"].get("playcount", 0))
+
 def update_song_data(song, token):
     url = f"https://api.spotify.com/v1/tracks/{song['track_id']}"
     headers = {"Authorization": f"Bearer {token}"}
@@ -267,20 +296,9 @@ def update_song_data(song, token):
         st.error(f"Error fetching data for track {song['track_id']}: {response.text}")
         return {}
 
-def get_spotify_playcount(track_id, token):
-    variables = json.dumps({"uri": f"spotify:track:{track_id}"})
-    extensions = json.dumps({
-        "persistedQuery": {
-            "version": 1,
-            "sha256Hash": "26cd58ab86ebba80196c41c3d48a4324c619e9a9d7df26ecca22417e0c50c6a4"
-        }
-    })
-    params = {"operationName": "getTrack", "variables": variables, "extensions": extensions}
-    headers = {"Authorization": f"Bearer {token}"}
-    response = requests.get("https://api-partner.spotify.com/pathfinder/v1/query", headers=headers, params=params)
-    response.raise_for_status()
-    return int(response.json()["data"]["trackUnion"].get("playcount", 0))
-
+#########################
+# Main Flows
+#########################
 def get_new_music():
     spotify_token = get_spotify_token()
     st.write("Spotify Access Token:", spotify_token)
@@ -300,7 +318,6 @@ def get_new_music():
             else:
                 msg, song_page_id = create_song_page(song)
                 messages.append(msg)
-            # Get complete updated data (including streams, monthly listeners, followers)
             updated = update_song_data(song, spotify_token)
             meas_id = query_measurement_entry(song_page_id, current_week)
             if meas_id:
