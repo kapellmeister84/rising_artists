@@ -85,7 +85,7 @@ def update_growth_for_measurement(entry_id, growth):
     payload = {"properties": {"Growth": {"number": growth}}}
     response = requests.patch(url, headers=notion_headers, json=payload)
     response.raise_for_status()
-    st.write(f\"Updating Growth: {growth}\")
+st.write(f\"Updating Growth: {growth}\")
 
 
 def update_streams_for_measurement(entry_id, streams):
