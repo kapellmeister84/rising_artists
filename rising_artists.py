@@ -33,9 +33,18 @@ SPOTIFY_CLIENT_SECRET = st.secrets["spotify"]["client_secret"]
 
 def get_spotify_token():
     url = "https://open.spotify.com/get_access_token?reason=transport&productType=web_player"
-    response = requests.get(url)
-    response.raise_for_status()
-    return response.json().get("accessToken")
+    retry_count = 0
+    while retry_count < 3:
+        try:
+            response = requests.get(url, timeout=5)
+            response.raise_for_status()
+            token = response.json().get("accessToken")
+            if token:
+                return token
+        except requests.exceptions.RequestException as e:
+            time.sleep(2)
+            retry_count += 1
+    raise Exception("Spotify Token konnte nicht abgerufen werden (504 Gateway Timeout).")
 
 # Spotify-Token und Header global setzen
 SPOTIFY_TOKEN = get_spotify_token()
@@ -135,98 +144,101 @@ def get_spotify_data(spotify_track_id):
 
 @st.cache_data(show_spinner=False)
 def get_metadata_from_tracking_db():
-    url = f"{notion_query_endpoint}/{tracking_db_id}/query"
-    payload = {"page_size": 100}
-    pages = []
-    has_more = True
-    start_cursor = None
-    while has_more:
-        if start_cursor:
-            payload["start_cursor"] = start_cursor
-        response = requests.post(url, headers=notion_headers, json=payload)
-        response.raise_for_status()
-        data = response.json()
-        pages.extend(data.get("results", []))
-        has_more = data.get("has_more", False)
-        start_cursor = data.get("next_cursor")
-    metadata = {}
-    with ThreadPoolExecutor() as executor:
-        futures = {}
+    # Fortschrittsanzeige für das Laden der Notion-Metadaten
+    with st.spinner("Lade Notion-Metadaten..."):
+        url = f"{notion_query_endpoint}/{tracking_db_id}/query"
+        payload = {"page_size": 100}
+        pages = []
+        has_more = True
+        start_cursor = None
+        while has_more:
+            if start_cursor:
+                payload["start_cursor"] = start_cursor
+            response = requests.post(url, headers=notion_headers, json=payload)
+            response.raise_for_status()
+            data = response.json()
+            pages.extend(data.get("results", []))
+            has_more = data.get("has_more", False)
+            start_cursor = data.get("next_cursor")
+        metadata = {}
+        with ThreadPoolExecutor() as executor:
+            futures = {}
+            for page in pages:
+                props = page.get("properties", {})
+                song_relations = props.get("Song", {}).get("relation", [])
+                if song_relations:
+                    related_page_id = song_relations[0].get("id")
+                    futures[related_page_id] = executor.submit(get_track_name_from_page, related_page_id)
+            track_names = {key: future.result() for key, future in futures.items()}
         for page in pages:
             props = page.get("properties", {})
             song_relations = props.get("Song", {}).get("relation", [])
             if song_relations:
                 related_page_id = song_relations[0].get("id")
-                futures[related_page_id] = executor.submit(get_track_name_from_page, related_page_id)
-        track_names = {key: future.result() for key, future in futures.items()}
-    for page in pages:
-        props = page.get("properties", {})
-        song_relations = props.get("Song", {}).get("relation", [])
-        if song_relations:
-            related_page_id = song_relations[0].get("id")
-            track_name = track_names.get(related_page_id, "Unbekannter Track")
-            spotify_track_id = get_track_id_from_page(related_page_id)
-            key = related_page_id
-        else:
-            track_name = "Unbekannter Track"
-            spotify_track_id = ""
-            key = page.get("id")
-        artist_rollup = props.get("Artist", {}).get("rollup", {})
-        artist = parse_rollup_text(artist_rollup)
-        release_rollup = props.get("Release Date", {}).get("rollup", {})
-        release_date = parse_rollup_text(release_rollup)
-        metadata[key] = {
-            "track_name": track_name,
-            "artist": artist,
-            "release_date": release_date,
-            "spotify_track_id": spotify_track_id
-        }
-    return metadata
+                track_name = track_names.get(related_page_id, "Unbekannter Track")
+                spotify_track_id = get_track_id_from_page(related_page_id)
+                key = related_page_id
+            else:
+                track_name = "Unbekannter Track"
+                spotify_track_id = ""
+                key = page.get("id")
+            artist_rollup = props.get("Artist", {}).get("rollup", {})
+            artist = parse_rollup_text(artist_rollup)
+            release_rollup = props.get("Release Date", {}).get("rollup", {})
+            release_date = parse_rollup_text(release_rollup)
+            metadata[key] = {
+                "track_name": track_name,
+                "artist": artist,
+                "release_date": release_date,
+                "spotify_track_id": spotify_track_id
+            }
+        return metadata
 
 def get_tracking_entries():
     if "tracking_entries" in st.session_state:
         return st.session_state.tracking_entries
-    url = f"{notion_query_endpoint}/{tracking_db_id}/query"
-    payload = {"page_size": 100}
-    pages = []
-    has_more = True
-    start_cursor = None
-    retry_delay = 1
-    while has_more:
-        if start_cursor:
-            payload["start_cursor"] = start_cursor
-        response = requests.post(url, headers=notion_headers, json=payload)
-        if response.status_code == 429:
-            time.sleep(retry_delay)
-            retry_delay *= 2
-            continue
-        response.raise_for_status()
-        data = response.json()
-        pages.extend(data.get("results", []))
-        has_more = data.get("has_more", False)
-        start_cursor = data.get("next_cursor")
+    with st.spinner("Lade Tracking-Daten..."):
+        url = f"{notion_query_endpoint}/{tracking_db_id}/query"
+        payload = {"page_size": 100}
+        pages = []
+        has_more = True
+        start_cursor = None
         retry_delay = 1
-    entries = []
-    for page in pages:
-        entry_id = page.get("id")
-        props = page.get("properties", {})
-        pop = props.get("Popularity Score", {}).get("number")
-        date_str = props.get("Date", {}).get("date", {}).get("start")
-        streams_val = props.get("Streams", {}).get("number")
-        hype = props.get("Hype Score", {}).get("number")
-        song_relations = props.get("Song", {}).get("relation", [])
-        for relation in song_relations:
-            song_id = relation.get("id")
-            entries.append({
-                "entry_id": entry_id,
-                "song_id": song_id,
-                "date": date_str,
-                "popularity": pop,
-                "Streams": streams_val,
-                "hype_score": hype
-            })
-    st.session_state.tracking_entries = entries
-    return entries
+        while has_more:
+            if start_cursor:
+                payload["start_cursor"] = start_cursor
+            response = requests.post(url, headers=notion_headers, json=payload)
+            if response.status_code == 429:
+                time.sleep(retry_delay)
+                retry_delay *= 2
+                continue
+            response.raise_for_status()
+            data = response.json()
+            pages.extend(data.get("results", []))
+            has_more = data.get("has_more", False)
+            start_cursor = data.get("next_cursor")
+            retry_delay = 1
+        entries = []
+        for page in pages:
+            entry_id = page.get("id")
+            props = page.get("properties", {})
+            pop = props.get("Popularity Score", {}).get("number")
+            date_str = props.get("Date", {}).get("date", {}).get("start")
+            streams_val = props.get("Streams", {}).get("number")
+            hype = props.get("Hype Score", {}).get("number")
+            song_relations = props.get("Song", {}).get("relation", [])
+            for relation in song_relations:
+                song_id = relation.get("id")
+                entries.append({
+                    "entry_id": entry_id,
+                    "song_id": song_id,
+                    "date": date_str,
+                    "popularity": pop,
+                    "Streams": streams_val,
+                    "hype_score": hype
+                })
+        st.session_state.tracking_entries = entries
+        return entries
 
 def get_all_song_page_ids():
     url = f"{notion_query_endpoint}/{songs_database_id}/query"
@@ -379,7 +391,6 @@ def update_popularity():
     st.session_state.tracking_entries = get_tracking_entries()
     status_text.text("Alle Daten aktualisiert!")
 
-# Funktionen für den Hype Score (Artist-basiert)
 def get_artist_data(artist_name, token):
     search_url = "https://api.spotify.com/v1/search"
     headers = {"Authorization": f"Bearer {token}"}
@@ -433,7 +444,6 @@ with st.sidebar:
         filter_pop_range = st.slider("Popularity Range (letzter Messwert)", 0, 100, (0, 100), step=1, key="filter_pop")
         submitted = st.form_submit_button("Filter anwenden")
 
-# Tracking-Daten laden
 if "tracking_entries" in st.session_state:
     tracking_entries = st.session_state.tracking_entries
 else:
@@ -453,7 +463,6 @@ else:
     df["spotify_track_id"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("spotify_track_id", ""))
     df_all = df[df["date"].notnull()]
 
-# Top 10 Songs ermitteln
 cumulative = []
 for song_id, group in df_all.groupby("song_id"):
     group = group.sort_values("date")
