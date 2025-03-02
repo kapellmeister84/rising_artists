@@ -152,7 +152,7 @@ promo_placeholder = st.empty()
     
     
     
-    spotify_playlist_ids = [
+spotify_playlist_ids = [
         "6Di85VhG9vfyswWHBTEoQN", "37i9dQZF1DX4jP4eebSWR9", "37i9dQZF1DX59oR8I71XgB",
         "37i9dQZF1DXbKGrOUA30KN", "37i9dQZF1DWUW2bvSkjcJ6", "531gtG63RwBSjuxb7XDGPL",
         "37i9dQZF1DWSTqUqJcxFk6", "37i9dQZF1DX36edUJpD76c", "37i9dQZF1DWSFDWzEZlALC",
@@ -162,13 +162,13 @@ promo_placeholder = st.empty()
         "37i9dQZF1DX1zpUaiwr15A", "37i9dQZEVXbNv6cjoMVCyg", "6oiQozBfDMhbtciv64BDBA",
         "5aZLJKzIh7iiBA64mZBhnw"
     ]
-    deezer_playlist_ids = [
+deezer_playlist_ids = [
         "1111143121", "1043463931", "146820791", "1257540851",
         "8668716682", "4524622884", "65490170", "785141981"
     ]
-    all_playlists = [(pid, "spotify") for pid in spotify_playlist_ids] + [(pid, "deezer") for pid in deezer_playlist_ids]
+all_playlists = [(pid, "spotify") for pid in spotify_playlist_ids] + [(pid, "deezer") for pid in deezer_playlist_ids]
 
-    def update_progress_bar(current, total):
+def update_progress_bar(current, total):
         percentage = int((current / total) * 100)
         progress_html = f"""
             <div class="progress-bar-container">
@@ -177,26 +177,26 @@ promo_placeholder = st.empty()
         """
         progress_placeholder.markdown(progress_html, unsafe_allow_html=True)
 
-    def show_playlist_promo():
+def show_playlist_promo():
         promo_html = (
             "<div class='playlist-promo'>🎧 While you wait, check out capelli on spotify: "
             "<a href='https://open.spotify.com/intl-de/artist/039VhVUEhmLgBiLkJog0Td' target='_blank'>Listen here</a></div>"
         )
         promo_placeholder.markdown(promo_html, unsafe_allow_html=True)
 
-    if submit and search_term:
+if submit and search_term:
         results = {}
         total_listings = 0
         unique_playlists = set()
         total_playlists = len(all_playlists)
         
         # Declare global before assignment
-        global SPOTIFY_TOKEN, SPOTIFY_HEADERS
+    global SPOTIFY_TOKEN, SPOTIFY_HEADERS
         spotify_token = get_spotify_token()
         SPOTIFY_TOKEN = spotify_token
         SPOTIFY_HEADERS = {"Authorization": f"Bearer {spotify_token}"}
         
-        for i, (pid, platform) in enumerate(all_playlists, start=1):
+    for i, (pid, platform) in enumerate(all_playlists, start=1):
             if platform == "spotify":
                 playlist = get_playlist_data(pid, spotify_token)
                 if not playlist:
@@ -251,9 +251,9 @@ promo_placeholder = st.empty()
             time.sleep(0.1)
         
     
-        status_message.empty()
-        progress_placeholder.empty()
-        promo_placeholder.empty()
+    status_message.empty()
+    progress_placeholder.empty()
+    promo_placeholder.empty()
         
         if results:
             song_count = len(results)
