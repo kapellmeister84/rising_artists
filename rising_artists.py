@@ -19,14 +19,14 @@ set_background("https://wallpapershome.com/images/pages/pic_h/26334.jpg")
 if "log_messages" not in st.session_state:
     st.session_state["log_messages"] = []
 
-# Log in der Sidebar anzeigen
+# Log in der Sidebar in einem scrollbaren Expander
 with st.sidebar.expander("Log-Details", expanded=True):
     log_placeholder = st.empty()
 
 def log(msg):
     timestamp = datetime.datetime.now().strftime('%H:%M:%S')
-    st.session_state.log_messages.append(f"{timestamp} - {msg}")
-    log_placeholder.text("\n".join(st.session_state.log_messages))
+    st.session_state["log_messages"].append(f"{timestamp} - {msg}")
+    log_placeholder.text("\n".join(st.session_state["log_messages"]))
 
 # === Notion-Konfiguration ===
 tracking_db_id = st.secrets["notion"]["tracking_db_id"]      # Tracking-Datenbank für Songs
