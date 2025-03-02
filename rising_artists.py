@@ -30,6 +30,9 @@ spotify_client_id = st.secrets["spotify"]["client_id"]
 spotify_client_secret = st.secrets["spotify"]["client_secret"]
 
 def get_spotify_token():
+    """
+    Get a Spotify access token using the Client Credentials Flow.
+    """
     auth_str = f"{spotify_client_id}:{spotify_client_secret}"
     b64_auth_str = base64.b64encode(auth_str.encode()).decode()
     headers = {
@@ -42,8 +45,16 @@ def get_spotify_token():
     return response.json()["access_token"]
 
 def get_web_spotify_token():
+    """
+    Get a Spotify access token from the web player endpoint.
+    This token is used for retrieving playcount via the partner API.
+    """
     response = requests.get("https://open.spotify.com/get_access_token?reason=transport&productType=web_player").json()
     return response["accessToken"]
+
+# Obtain a Spotify token and define global headers for partner API calls.
+SPOTIFY_TOKEN = get_spotify_token()
+SPOTIFY_HEADERS = {"Authorization": f"Bearer {SPOTIFY_TOKEN}"}
 
 #########################
 # SONG & MEASUREMENTS   #
@@ -57,6 +68,9 @@ def get_artist_popularity(artist_id, token):
     return 0
 
 def get_monthly_listeners(artist_id):
+    """
+    Scrape the monthly listeners count from the Spotify artist page.
+    """
     url = f"https://open.spotify.com/artist/{artist_id}"
     headers = {"User-Agent": "Mozilla/5.0", "Accept-Language": "en"}
     r = requests.get(url, headers=headers)
@@ -92,7 +106,7 @@ def get_playlist_songs(playlist_id, token):
             available_markets = track.get("album", {}).get("available_markets", [])
             country_code = available_markets[0] if available_markets else ""
             artist_pop = get_artist_popularity(artist_id, token) if artist_id else 0
-            streams = 0  # Will be updated later
+            streams = 0  # To be updated later via playcount
             songs.append({
                 "song_name": song_name,
                 "artist_name": artist_name,
@@ -211,26 +225,22 @@ def update_measurement_entry(measurement_page_id, song_pop, artist_pop, streams,
         return f"Error updating measurement: {response.text}"
 
 #########################
-# New: Playcount & Extra Metrics
+# Reliable Playcount via Spotify Partner API
 #########################
 def get_spotify_playcount(track_id, token):
-    try:
-        partner_token = get_web_spotify_token()
-        variables = json.dumps({"uri": f"spotify:track:{track_id}"})
-        extensions = json.dumps({
-            "persistedQuery": {
-                "version": 1,
-                "sha256Hash": "26cd58ab86ebba80196c41c3d48a4324c619e9a9d7df26ecca22417e0c50c6a4"
-            }
-        })
-        params = {"operationName": "getTrack", "variables": variables, "extensions": extensions}
-        headers = {"Authorization": f"Bearer {partner_token}"}
-        response = requests.get("https://api-partner.spotify.com/pathfinder/v1/query", headers=headers, params=params)
-        response.raise_for_status()
-        return int(response.json()["data"]["trackUnion"].get("playcount", 0))
-    except Exception as e:
-        st.error(f"Error fetching playcount for track {track_id}: {e}")
-        return 0
+    variables = json.dumps({"uri": f"spotify:track:{track_id}"})
+    extensions = json.dumps({
+        "persistedQuery": {
+            "version": 1,
+            "sha256Hash": "26cd58ab86ebba80196c41c3d48a4324c619e9a9d7df26ecca22417e0c50c6a4"
+        }
+    })
+    params = {"operationName": "getTrack", "variables": variables, "extensions": extensions}
+    # Here we use the web player token stored in SPOTIFY_HEADERS
+    headers = {"Authorization": f"Bearer {SPOTIFY_HEADERS['Authorization'].split()[1]}"}
+    response = requests.get("https://api-partner.spotify.com/pathfinder/v1/query", headers=headers, params=params)
+    response.raise_for_status()
+    return int(response.json()["data"]["trackUnion"].get("playcount", 0))
 
 def update_song_data(song, token):
     url = f"https://api.spotify.com/v1/tracks/{song['track_id']}"
