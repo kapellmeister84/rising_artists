@@ -96,6 +96,11 @@ def get_all_tracking_pages():
         if start_cursor:
             payload["start_cursor"] = start_cursor
         response = requests.post(url, headers=notion_headers, json=payload)
+        # Falls Rate-Limit erreicht: Warte, bevor du es erneut versuchst
+        if response.status_code == 429:
+            retry_after = int(response.headers.get("Retry-After", 1))
+            time.sleep(retry_after)
+            continue
         response.raise_for_status()
         data = response.json()
         pages.extend(data.get("results", []))
