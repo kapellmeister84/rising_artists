@@ -278,8 +278,7 @@ def update_popularity():
     st.success("Popularity wurde aktualisiert!")
     status_text.empty()
     
-    # Growth-Berechnung: Für jeden Song werden die beiden neuesten Messwerte verglichen und der Growth-Wert
-    # wird in den neuesten Eintrag geschrieben.
+    # Growth-Berechnung: Für jeden Song werden die beiden neuesten Messwerte verglichen
     st.write("Berechne Growth für jeden Song...")
     # Cache leeren, um die aktuellsten Daten zu erhalten:
     get_all_tracking_pages.clear()
@@ -300,13 +299,18 @@ def update_popularity():
         st.write(f"Song {song_id}: Growth = {growth:.1f}% (Vergleich: {prev} -> {curr})")
         update_growth_for_measurement(latest_entry_id, growth)
 
-# --- Sidebar: Buttons und Filterformular ---
+# --- Sidebar: Refresh Button und Filterformular ---
 with st.sidebar:
     st.markdown("## Automatische Updates")
     if st.button("Get New Music"):
         get_new_music()
     if st.button("Update Popularity"):
         update_popularity()
+    if st.button("Refresh Daten"):
+        # Leert alle Caches, sodass alle Daten neu von Notion geladen werden
+        get_all_tracking_pages.clear()
+        get_tracking_entries.clear()
+        st.experimental_rerun()
     st.markdown("---")
     with st.form("filter_form"):
         search_query = st.text_input("Song/Artist Suche", "")
@@ -343,7 +347,7 @@ for song_id, group in df_all.groupby("song_id"):
     if group.empty:
         continue
     last_pop = group.iloc[-1]["popularity"]
-    # Verwende den Growth-Wert des letzten Eintrags (aus der DB), falls vorhanden, sonst kumulativ berechnen
+    # Verwende den Growth-Wert des letzten Eintrags, falls vorhanden, sonst kumulativ berechnen
     last_growth = group.iloc[-1].get("growth")
     if last_growth is None:
         first_pop = group.iloc[0]["popularity"]
@@ -366,7 +370,7 @@ if cum_df.empty:
     st.write("Keine Daten für die Top 10 verfügbar.")
     top10 = pd.DataFrame()
 else:
-    # Nur Songs mit Growth > 0 und die 10 mit den größten Growth-Werten auswählen
+    # Nur Songs mit Growth > 0 werden berücksichtigt, und die 10 mit den höchsten Growth-Werten ausgewählt
     top10 = cum_df[cum_df["cumulative_growth"] > 0].sort_values("cumulative_growth", ascending=False).head(10)
 
 num_columns = 5
@@ -389,11 +393,10 @@ for row_df in rows:
             st.markdown(f"<div style='text-align: center;'>Popularity: {row['last_popularity']:.1f}</div>", unsafe_allow_html=True)
             st.markdown(f"<div style='text-align: center; font-weight: bold;'>Growth: {row['cumulative_growth']:.1f}%</div>", unsafe_allow_html=True)
             
-            # Toggle-Checkbox zum Anzeigen/Ausblenden des Graphen: Beim Aufklappen werden die Tracking-Daten frisch geladen.
             show_graph = st.checkbox("Graph anzeigen / ausblenden", key=f"toggle_{row['song_id']}")
             if show_graph:
                 with st.spinner("Graph wird geladen..."):
-                    # Cache leeren und neu laden, um aktuelle Daten zu erhalten
+                    # Cache leeren und aktuelle Daten laden, wenn der Graph aufgeklappt wird
                     get_all_tracking_pages.clear()
                     get_tracking_entries.clear()
                     updated_entries = get_tracking_entries()
