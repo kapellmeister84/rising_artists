@@ -31,7 +31,6 @@ SPOTIFY_CLIENT_ID = st.secrets["spotify"]["client_id"]
 SPOTIFY_CLIENT_SECRET = st.secrets["spotify"]["client_secret"]
 
 def get_spotify_token():
-    # Wir nutzen den Web-Player-Endpunkt
     url = "https://open.spotify.com/get_access_token?reason=transport&productType=web_player"
     response = requests.get(url)
     response.raise_for_status()
@@ -84,7 +83,7 @@ def update_streams_for_measurement(entry_id, streams):
     response = requests.patch(url, headers=notion_headers, json=payload)
     response.raise_for_status()
 
-# Caching für dynamische Daten (TTL = 300 Sekunden)
+# Für dynamische Daten mit TTL (5 Minuten)
 @st.cache_data(ttl=300, show_spinner=False)
 def get_all_tracking_pages():
     url = f"{notion_query_endpoint}/{tracking_db_id}/query"
@@ -110,44 +109,6 @@ def get_all_tracking_pages():
     return pages
 
 @st.cache_data(ttl=300, show_spinner=False)
-def get_tracking_entries():
-    pages = get_all_tracking_pages()
-    entries = []
-    for page in pages:
-        entry_id = page.get("id")
-        props = page.get("properties", {})
-        pop = props.get("Popularity Score", {}).get("number")
-        date_str = props.get("Date", {}).get("date", {}).get("start")
-        growth = props.get("Growth", {}).get("number")
-        streams_val = props.get("Streams", {}).get("number")
-        song_relations = props.get("Song", {}).get("relation", [])
-        for relation in song_relations:
-            song_id = relation.get("id")
-            entries.append({
-                "entry_id": entry_id,
-                "song_id": song_id,
-                "date": date_str,
-                "popularity": pop,
-                "growth": growth,
-                "Streams": streams_val
-            })
-    return entries
-
-@st.cache_data(ttl=300, show_spinner=False)
-def get_spotify_data(spotify_track_id):
-    url = f"https://api.spotify.com/v1/tracks/{spotify_track_id}"
-    response = requests.get(url, headers={"Authorization": f"Bearer {SPOTIFY_TOKEN}"})
-    if response.status_code == 200:
-        data = response.json()
-        cover_url = ""
-        if data.get("album") and data["album"].get("images"):
-            cover_url = data["album"]["images"][0].get("url", "")
-        spotify_link = data.get("external_urls", {}).get("spotify", "")
-        return cover_url, spotify_link
-    return "", ""
-
-# Metadaten (Artist, Songname etc.) dauerhaft cachen (keine TTL)
-@st.cache_data(show_spinner=False)
 def get_metadata_from_tracking_db():
     pages = get_all_tracking_pages()
     metadata = {}
@@ -184,7 +145,52 @@ def get_metadata_from_tracking_db():
         }
     return metadata
 
+# Neue Funktion: Nur die Tracking-Einträge für einen bestimmten Song abrufen
+def get_tracking_entries_for_song(song_id):
+    url = f"{notion_query_endpoint}/{tracking_db_id}/query"
+    payload = {
+       "filter": {
+           "property": "Song",
+           "relation": {
+               "contains": song_id
+           }
+       },
+       "page_size": 100
+    }
+    response = requests.post(url, headers=notion_headers, json=payload)
+    response.raise_for_status()
+    data = response.json()
+    entries = []
+    for page in data.get("results", []):
+         entry_id = page.get("id")
+         props = page.get("properties", {})
+         pop = props.get("Popularity Score", {}).get("number")
+         date_str = props.get("Date", {}).get("date", {}).get("start")
+         growth = props.get("Growth", {}).get("number")
+         streams_val = props.get("Streams", {}).get("number")
+         entries.append({
+              "entry_id": entry_id,
+              "song_id": song_id,
+              "date": date_str,
+              "popularity": pop,
+              "growth": growth,
+              "Streams": streams_val
+         })
+    return entries
+
 # Für Playcounts keine Caches – immer aktuell
+def get_spotify_data(spotify_track_id):
+    url = f"https://api.spotify.com/v1/tracks/{spotify_track_id}"
+    response = requests.get(url, headers={"Authorization": f"Bearer {SPOTIFY_TOKEN}"})
+    if response.status_code == 200:
+        data = response.json()
+        cover_url = ""
+        if data.get("album") and data["album"].get("images"):
+            cover_url = data["album"]["images"][0].get("url", "")
+        spotify_link = data.get("external_urls", {}).get("spotify", "")
+        return cover_url, spotify_link
+    return "", ""
+
 def get_spotify_playcount(track_id, token):
     variables = json.dumps({"uri": f"spotify:track:{track_id}"})
     extensions = json.dumps({
@@ -291,7 +297,8 @@ def update_popularity():
         }
         requests.post(notion_page_endpoint, headers=notion_headers, json=payload)
 
-    # Abrufen aller Song-Seiten:
+    # Aktualisiere nur für die Songs, die aktuell in Top 10 oder Filter-Ergebnissen angezeigt werden.
+    # Hierfür laden wir zunächst die Song-IDs aus der Songs-Datenbank (minimal)
     song_pages = get_all_song_page_ids()
     total = len(song_pages)
     song_to_track = {}
@@ -316,44 +323,46 @@ def update_popularity():
     st.success("Popularity wurde aktualisiert!")
     status_text.empty()
     
-    st.write("Berechne Growth für jeden Song...")
-    get_all_tracking_pages.clear()
-    get_tracking_entries.clear()
-    updated_entries = get_tracking_entries()
-    df_update = pd.DataFrame(updated_entries)
-    df_update["date"] = pd.to_datetime(df_update["date"], errors="coerce")
-    df_update = df_update.dropna(subset=["date", "song_id"])
-    growth_groups = list(df_update.groupby("song_id"))
-    growth_progress = st.progress(0)
-    total_groups = len(growth_groups)
-    for idx, (song_id, group) in enumerate(growth_groups):
-        group = group.sort_values("date")
-        if len(group) >= 2:
-            prev = group.iloc[-2]["popularity"]
-            curr = group.iloc[-1]["popularity"]
-            growth = ((curr - prev) / prev) * 100 if prev and prev != 0 else 0
-            comparison = f"(Vergleich: {prev} -> {curr})"
-        else:
-            growth = 0
-            comparison = "(keine Vergleichsdaten)"
-        latest_entry_id = group.iloc[-1]["entry_id"]
-        growth_progress.progress((idx + 1) / total_groups)
-        update_growth_for_measurement(latest_entry_id, growth)
-    
-    st.write("Aktualisiere Streams für jeden Song...")
-    get_all_tracking_pages.clear()
-    get_tracking_entries.clear()
-    updated_entries = get_tracking_entries()
-    df_update = pd.DataFrame(updated_entries)
-    df_update["date"] = pd.to_datetime(df_update["date"], errors="coerce")
-    df_update = df_update.dropna(subset=["date", "song_id"])
+    st.write("Berechne Growth für jeden angezeigten Song...")
+    # Für jeden angezeigten Song holen wir fresh Tracking-Einträge
+    # Hier verwenden wir die in der Anzeige verwendeten Song-IDs aus get_metadata_from_tracking_db
     metadata = get_metadata_from_tracking_db()
-    stream_groups = list(df_update.groupby("song_id"))
+    song_ids = list(metadata.keys())
+    growth_progress = st.progress(0)
+    total_groups = len(song_ids)
+    for idx, song_id in enumerate(song_ids):
+        fresh_entries = get_tracking_entries_for_song(song_id)
+        if not fresh_entries:
+            growth = 0
+        else:
+            df_song = pd.DataFrame(fresh_entries)
+            df_song["date"] = pd.to_datetime(df_song["date"], errors="coerce")
+            df_song = df_song.dropna(subset=["date"])
+            df_song = df_song.sort_values("date")
+            if len(df_song) >= 2:
+                prev = df_song.iloc[-2]["popularity"]
+                curr = df_song.iloc[-1]["popularity"]
+                growth = ((curr - prev) / prev) * 100 if prev and prev != 0 else 0
+            else:
+                growth = 0
+        # Aktualisiere Growth in Notion – benutze den neuesten Eintrag, falls vorhanden
+        if fresh_entries:
+            latest_entry_id = fresh_entries[-1]["entry_id"]
+            update_growth_for_measurement(latest_entry_id, growth)
+        growth_progress.progress((idx + 1) / total_groups)
+    
+    st.write("Aktualisiere Streams für jeden angezeigten Song...")
     stream_progress = st.progress(0)
-    total_streams = len(stream_groups)
-    for idx, (song_id, group) in enumerate(stream_groups):
-        group = group.sort_values("date")
-        latest_entry_id = group.iloc[-1]["entry_id"]
+    total_streams = len(song_ids)
+    for idx, song_id in enumerate(song_ids):
+        fresh_entries = get_tracking_entries_for_song(song_id)
+        if not fresh_entries:
+            continue
+        df_song = pd.DataFrame(fresh_entries)
+        df_song["date"] = pd.to_datetime(df_song["date"], errors="coerce")
+        df_song = df_song.dropna(subset=["date"])
+        df_song = df_song.sort_values("date")
+        latest_entry_id = df_song.iloc[-1]["entry_id"]
         song_meta = metadata.get(song_id, {})
         spotify_track_id = song_meta.get("spotify_track_id", "")
         streams = 0
@@ -365,24 +374,41 @@ def update_popularity():
                     streams = get_spotify_playcount(spotify_track_id, SPOTIFY_TOKEN)
             except Exception as e:
                 streams = 0
-        stream_progress.progress((idx + 1) / total_streams)
         update_streams_for_measurement(latest_entry_id, streams)
+        stream_progress.progress((idx + 1) / total_streams)
 
-def get_spotify_playcount(track_id, token):
-    variables = json.dumps({"uri": f"spotify:track:{track_id}"})
-    extensions = json.dumps({
-        "persistedQuery": {
-            "version": 1,
-            "sha256Hash": "26cd58ab86ebba80196c41c3d48a4324c619e9a9d7df26ecca22417e0c50c6a4"
-        }
-    })
-    params = {"operationName": "getTrack", "variables": variables, "extensions": extensions}
-    url = "https://api-partner.spotify.com/pathfinder/v1/query"
-    headers = {"Authorization": f"Bearer {token}"}
-    response = requests.get(url, headers=headers, params=params)
+# --- Neue Funktion: Tracking-Einträge für einen bestimmten Song abrufen ---
+def get_tracking_entries_for_song(song_id):
+    url = f"{notion_query_endpoint}/{tracking_db_id}/query"
+    payload = {
+       "filter": {
+           "property": "Song",
+           "relation": {
+               "contains": song_id
+           }
+       },
+       "page_size": 100
+    }
+    response = requests.post(url, headers=notion_headers, json=payload)
     response.raise_for_status()
     data = response.json()
-    return int(data["data"]["trackUnion"].get("playcount", 0))
+    entries = []
+    for page in data.get("results", []):
+         entry_id = page.get("id")
+         props = page.get("properties", {})
+         pop = props.get("Popularity Score", {}).get("number")
+         date_str = props.get("Date", {}).get("date", {}).get("start")
+         growth = props.get("Growth", {}).get("number")
+         streams_val = props.get("Streams", {}).get("number")
+         entries.append({
+              "entry_id": entry_id,
+              "song_id": song_id,
+              "date": date_str,
+              "popularity": pop,
+              "growth": growth,
+              "Streams": streams_val
+         })
+    return entries
 
 # --- Sidebar: Refresh Button und Filterformular ---
 with st.sidebar:
@@ -409,6 +435,7 @@ with st.sidebar:
 st.title("ARTIST SCOUT 1.0b")
 st.header("Top 10 songs to watch")
 
+# Für die Übersicht laden wir zunächst die gecachten Tracking-Daten
 tracking_entries = get_tracking_entries()
 metadata = get_metadata_from_tracking_db()
 df = pd.DataFrame(tracking_entries)
@@ -476,33 +503,28 @@ for row_df in rows:
             show_graph = st.checkbox("Graph anzeigen / ausblenden", key=f"toggle_{row['song_id']}")
             if show_graph:
                 with st.spinner("Graph wird geladen..."):
-                    try:
-                        get_all_tracking_pages.clear()
-                        get_tracking_entries.clear()
-                    except Exception as e:
-                        st.write("Fehler beim Leeren des Caches:", e)
-                    updated_entries = get_tracking_entries()
-                    df_new = pd.DataFrame(updated_entries)
-                    df_new["date"] = pd.to_datetime(df_new["date"], errors="coerce").dt.tz_localize(None)
-                    song_history = df_new[df_new["song_id"] == row["song_id"]].sort_values("date")
-                    # Popularity-Graph
-                    if len(song_history) == 1:
-                        fig = px.scatter(song_history, x="date", y="popularity",
-                                         title=f"{row['track_name']} - {row['artist']}",
-                                         labels={"date": "Datum", "popularity": "Popularity Score"})
-                    else:
-                        fig = px.line(song_history, x="date", y="popularity",
-                                      title=f"{row['track_name']} - {row['artist']}",
-                                      labels={"date": "Datum", "popularity": "Popularity Score"},
-                                      markers=True)
-                    fig.update_yaxes(range=[0, 100])
-                    st.plotly_chart(fig, use_container_width=True, key=f"chart_{row['song_id']}_{time.time()}")
-                    
-                    # Neuer Graph: Stream-Wachstum
-                    show_streams_graph = st.checkbox("Stream Wachstum anzeigen", key=f"toggle_stream_{row['song_id']}")
-                    if show_streams_graph:
-                        with st.spinner("Stream-Grafik wird geladen..."):
-                            # Verwende die gleichen aktualisierten Tracking-Daten
+                    # Für den angezeigten Song fresh Tracking-Daten abrufen:
+                    fresh_entries = get_tracking_entries_for_song(row["song_id"])
+                    if fresh_entries:
+                        df_new = pd.DataFrame(fresh_entries)
+                        df_new["date"] = pd.to_datetime(df_new["date"], errors="coerce").dt.tz_localize(None)
+                        song_history = df_new.sort_values("date")
+                        # Popularity-Graph:
+                        if len(song_history) == 1:
+                            fig = px.scatter(song_history, x="date", y="popularity",
+                                             title=f"{row['track_name']} - {row['artist']}",
+                                             labels={"date": "Datum", "popularity": "Popularity Score"})
+                        else:
+                            fig = px.line(song_history, x="date", y="popularity",
+                                          title=f"{row['track_name']} - {row['artist']}",
+                                          labels={"date": "Datum", "popularity": "Popularity Score"},
+                                          markers=True)
+                        fig.update_yaxes(range=[0, 100])
+                        st.plotly_chart(fig, use_container_width=True, key=f"chart_{row['song_id']}_{time.time()}")
+                        
+                        # Neuer Graph: Stream-Wachstum:
+                        show_streams_graph = st.checkbox("Stream Wachstum anzeigen", key=f"toggle_stream_{row['song_id']}")
+                        if show_streams_graph:
                             if "Streams" in song_history.columns and not song_history["Streams"].isnull().all():
                                 if len(song_history) == 1:
                                     fig_stream = px.scatter(song_history, x="date", y="Streams",
@@ -516,6 +538,8 @@ for row_df in rows:
                                 st.plotly_chart(fig_stream, use_container_width=True, key=f"chart_stream_{row['song_id']}_{time.time()}")
                             else:
                                 st.write("Keine Stream-Daten verfügbar")
+                    else:
+                        st.write("Keine aktuellen Tracking-Daten verfügbar")
                     
 st.header("Songs filtern")
 if submitted:
