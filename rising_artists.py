@@ -82,9 +82,7 @@ def update_streams_for_measurement(entry_id, streams):
 @st.cache_data(show_spinner=False)
 def get_all_tracking_pages():
     url = f"{notion_query_endpoint}/{tracking_db_id}/query"
-    payload = {
-        "page_size": 100  # Maximale Anzahl pro Anfrage
-    }
+    payload = {"page_size": 100}
     pages = []
     has_more = True
     start_cursor = None
@@ -188,6 +186,31 @@ def get_spotify_playcount(track_id, token):
     data = response.json()
     return int(data["data"]["trackUnion"].get("playcount", 0))
 
+# --- Funktion zum Abrufen aller Song-Seiten aus der Songs-Datenbank (Pagination) ---
+def get_all_song_page_ids():
+    url = f"{notion_query_endpoint}/{songs_database_id}/query"
+    payload = {"page_size": 100}
+    pages = []
+    has_more = True
+    start_cursor = None
+    while has_more:
+        if start_cursor:
+            payload["start_cursor"] = start_cursor
+        response = requests.post(url, headers=notion_headers, json=payload)
+        response.raise_for_status()
+        data = response.json()
+        pages.extend(data.get("results", []))
+        has_more = data.get("has_more", False)
+        start_cursor = data.get("next_cursor")
+    song_pages = []
+    for page in pages:
+        page_id = page["id"]
+        popularity = 0
+        if "Popularity" in page["properties"]:
+            popularity = page["properties"]["Popularity"].get("number", 0)
+        song_pages.append({"page_id": page_id, "popularity": popularity})
+    return song_pages
+
 # --- Platzhalterfunktionen für Buttons ---
 def get_new_music():
     st.write("Rufe neue Musik aus Playlisten ab...")
@@ -207,23 +230,8 @@ def update_popularity():
     progress_bar = st.progress(0)
     status_text = st.empty()
     
-    songs_database_id = "1a9b6204cede8006b67fd247dc660ba4"
     week_database_id = "1a9b6204cede80e29338ede2c76999f2"
-
-    def get_all_song_page_ids():
-        url = f"{notion_query_endpoint}/{songs_database_id}/query"
-        response = requests.post(url, headers=notion_headers)
-        response.raise_for_status()
-        data = response.json()
-        song_pages = []
-        for page in data.get("results", []):
-            page_id = page["id"]
-            popularity = 0
-            if "Popularity" in page["properties"]:
-                popularity = page["properties"]["Popularity"].get("number", 0)
-            song_pages.append({"page_id": page_id, "popularity": popularity})
-        return song_pages
-
+    
     def get_song_name(page_id):
         url = f"{notion_page_endpoint}/{page_id}"
         response = requests.get(url, headers=notion_headers)
@@ -269,6 +277,7 @@ def update_popularity():
         }
         requests.post(notion_page_endpoint, headers=notion_headers, json=payload)
 
+    # Verwende die globale Funktion, um alle Song-Seiten abzurufen (Pagination)
     song_pages = get_all_song_page_ids()
     total = len(song_pages)
     song_to_track = {}
@@ -313,7 +322,6 @@ def update_popularity():
         update_growth_for_measurement(latest_entry_id, growth)
     
     st.write("Aktualisiere Streams für jeden Song...")
-    # Streams-Aktualisierung: Frische Daten laden
     st.cache_data.clear(get_all_tracking_pages)
     st.cache_data.clear(get_tracking_entries)
     updated_entries = get_tracking_entries()
@@ -337,7 +345,6 @@ def update_popularity():
         st.write(f"Song {song_id}: Streams = {streams}")
         update_streams_for_measurement(latest_entry_id, streams)
 
-# --- Neue Funktion: Streams von Spotify abrufen ---
 def get_spotify_playcount(track_id, token):
     variables = json.dumps({"uri": f"spotify:track:{track_id}"})
     extensions = json.dumps({
