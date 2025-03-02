@@ -183,6 +183,10 @@ def show_playlist_promo():
             "<a href='https://open.spotify.com/intl-de/artist/039VhVUEhmLgBiLkJog0Td' target='_blank'>Listen here</a></div>"
         )
         promo_placeholder.markdown(promo_html, unsafe_allow_html=True)
+    
+results = {}  # Variable vorab definieren
+unique_playlists = set()
+total_listings = 0
 
 if submit and search_term:
         results = {}
