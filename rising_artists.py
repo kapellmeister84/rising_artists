@@ -18,6 +18,7 @@ set_background("https://wallpapershome.com/images/pages/pic_h/26334.jpg")
 
 # === Notion-Konfiguration ===
 tracking_db_id = "1a9b6204cede80e29338ede2c76999f2"  # Tracking-Datenbank (enthält Rollups für "Artist" und "Release Date", Relation "Song")
+songs_database_id = "1a9b6204cede8006b67fd247dc660ba4"  # Songs-Datenbank
 notion_secret = "secret_yYvZbk7zcKy0Joe3usdCHMbbZmAFHnCKrF7NvEkWY6E"
 notion_query_endpoint = "https://api.notion.com/v1/databases"
 notion_page_endpoint = "https://api.notion.com/v1/pages"
@@ -35,20 +36,56 @@ def get_spotify_token():
     return response.json().get("accessToken")
 SPOTIFY_TOKEN = get_spotify_token()
 
-# --- Hilfsfunktionen ---
-def parse_rollup_text(rollup):
-    texts = []
-    if rollup and "array" in rollup:
-        for item in rollup["array"]:
-            if item.get("type") == "rich_text":
-                for sub in item.get("rich_text", []):
-                    texts.append(sub.get("plain_text", ""))
-            elif item.get("type") == "date":
-                date_info = item.get("date", {})
-                if date_info.get("start"):
-                    texts.append(date_info["start"])
-    return " ".join(texts).strip()
+# --- Utils für Archivierung ---
+def archive_page(page_id):
+    """
+    Archiviert (löscht) eine Seite in Notion, indem sie auf archived=True gesetzt wird.
+    """
+    url = f"{notion_page_endpoint}/{page_id}"
+    payload = {"archived": True}
+    response = requests.patch(url, headers=notion_headers, json=payload)
+    response.raise_for_status()
 
+def cleanup_old_songs():
+    """
+    Überprüft alle Tracking-Einträge und archiviert (löscht) alle Seiten,
+    bei denen ein Song seit mindestens 3 Wochen getrackt wird.
+    Für jeden Song wird das früheste Tracking-Datum ermittelt – wenn die Differenz
+    zur aktuellen Zeit >= 21 Tage beträgt, werden alle zugehörigen Tracking-Einträge
+    und die Song-Seite archiviert.
+    """
+    st.write("Bereinige alte Songs ...")
+    # Cache leeren, um sicherzustellen, dass wir aktuelle Daten haben:
+    get_all_tracking_pages.clear()
+    get_tracking_entries.clear()
+    entries = get_tracking_entries()
+    if not entries:
+        return
+    df = pd.DataFrame(entries)
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df = df.dropna(subset=["date", "song_id"])
+    now = datetime.datetime.now()
+    # Gruppieren nach Song-ID:
+    for song_id, group in df.groupby("song_id"):
+        min_date = group["date"].min()
+        if (now - min_date).days >= 21:
+            st.write(f"Song {song_id} wird archiviert, da er seit { (now - min_date).days } Tagen getrackt wird.")
+            # Archiviert alle Tracking-Einträge für diesen Song:
+            for entry in group["entry_id"]:
+                try:
+                    archive_page(entry)
+                except Exception as e:
+                    st.write(f"Fehler beim Archivieren von Tracking-Eintrag {entry}: {e}")
+            # Archiviert auch die Song-Seite in der Songs-Datenbank:
+            try:
+                archive_page(song_id)
+            except Exception as e:
+                st.write(f"Fehler beim Archivieren der Song-Seite {song_id}: {e}")
+
+# --- Rufe Cleanup beim Start auf ---
+cleanup_old_songs()
+
+# --- Weitere Hilfsfunktionen und Caching (wie bisher) ---
 def get_track_name_from_page(page_id):
     url = f"{notion_page_endpoint}/{page_id}"
     response = requests.get(url, headers=notion_headers)
@@ -184,8 +221,9 @@ def update_popularity():
     progress_bar = st.progress(0)
     status_text = st.empty()
     
+    # IDs der Songs- und Week-Datenbanken
     songs_database_id = "1a9b6204cede8006b67fd247dc660ba4"
-    week_database_id = "1a9b6204cede80e29338ede2c76999f2"
+    week_database_id = tracking_db_id  # Gleiche wie Tracking-Datenbank
 
     def get_all_song_page_ids():
         url = f"{notion_query_endpoint}/{songs_database_id}/query"
@@ -270,8 +308,7 @@ def update_popularity():
     st.success("Popularity wurde aktualisiert!")
     status_text.empty()
     
-    # Growth-Berechnung: Für jeden Song werden die beiden neuesten Messwerte verglichen und der Growth-Wert
-    # wird in den neuesten Eintrag geschrieben.
+    # Growth-Berechnung: Vergleiche die beiden neuesten Messwerte jedes Songs und update den Growth-Wert
     st.write("Berechne Growth für jeden Song...")
     # Cache leeren, um die aktuellsten Daten zu erhalten:
     get_all_tracking_pages.clear()
@@ -314,10 +351,10 @@ with st.sidebar:
         filter_days = filter_timeframe_days[filter_timeframe_option]
         submitted = st.form_submit_button("Filter anwenden")
 
-st.title("ARTIST SCOUT 1.0b")
+st.title("Song Tracking Übersicht")
 
 # 1. Oben: Top 10 Songs – Wachstum über alle Messungen
-st.header("Top 10 songs to watch")
+st.header("Top 10 Songs – Wachstum über alle Messungen")
 
 tracking_entries = get_tracking_entries()
 metadata = get_metadata_from_tracking_db()
@@ -339,6 +376,7 @@ for song_id, group in df_all.groupby("song_id"):
     if group.empty:
         continue
     last_pop = group.iloc[-1]["popularity"]
+    # Nutze den Growth-Wert des neuesten Eintrags, falls vorhanden, sonst berechne kumulativ
     last_growth = group.iloc[-1].get("growth")
     if last_growth is None:
         first_pop = group.iloc[0]["popularity"]
@@ -361,6 +399,7 @@ if cum_df.empty:
     st.write("Keine Daten für die Top 10 verfügbar.")
     top10 = pd.DataFrame()
 else:
+    # Nur Songs mit Growth > 0 werden berücksichtigt, und die 10 Songs mit den höchsten Growth-Werten ausgewählt
     top10 = cum_df[cum_df["cumulative_growth"] > 0].sort_values("cumulative_growth", ascending=False).head(10)
 
 num_columns = 5
@@ -383,6 +422,7 @@ for row_df in rows:
             st.markdown(f"<div style='text-align: center;'>Popularity: {row['last_popularity']:.1f}</div>", unsafe_allow_html=True)
             st.markdown(f"<div style='text-align: center; font-weight: bold;'>Growth: {row['cumulative_growth']:.1f}%</div>", unsafe_allow_html=True)
             
+            # Toggle-Checkbox zum Anzeigen/Ausblenden des Graphen – beim Aufklappen werden aktuelle Daten geladen
             show_graph = st.checkbox("Graph anzeigen / ausblenden", key=f"toggle_{row['song_id']}")
             if show_graph:
                 with st.spinner("Graph wird geladen..."):
