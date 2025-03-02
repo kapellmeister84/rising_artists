@@ -122,9 +122,12 @@ def get_songs_metadata():
     return metadata
 
 songs_metadata = get_songs_metadata()
+st.title("Songs Metadata from Notion (with Measurements)")
+st.write("Loaded songs metadata:")
+st.write(songs_metadata)
 
 ######################################
-# Log-Fenster und Fortschrittsbalken in der Sidebar
+# Sidebar: Log-Fenster und Fortschrittsbalken
 ######################################
 if "log_messages" not in st.session_state:
     st.session_state.log_messages = []
@@ -184,75 +187,27 @@ def get_spotify_popularity(track_id, token):
         log(f"Error fetching popularity for track {track_id}: {e}")
         return 0
 
-######################################
-# Neue Funktion: Suche in Songs-Datenbank
-######################################
-def search_songs(query):
-    query_lower = query.lower()
-    results = {}
-    for key, song in songs_metadata.items():
-        if query_lower in song.get("track_name", "").lower() or query_lower in song.get("artist_name", "").lower():
-            # Aktualisiere für das Suchergebnis die aktuellen Spotify-Daten und lege einen neuen Measurement-Eintrag an
-            details = update_song_data(song, SPOTIFY_TOKEN)
-            new_meas_id = create_measurement_entry(song, details)
-            update_song_measurements_relation(song["page_id"], new_meas_id)
-            song["latest_measurement"] = details  # Speichere das aktuelle Messergebnis
-            results[key] = song
-    return results
+# Hier die Funktion get_monthly_listeners_from_html hinzufügen
+def get_monthly_listeners_from_html(artist_id):
+    url = f"https://open.spotify.com/artist/{artist_id}"
+    headers = {"User-Agent": "Mozilla/5.0", "Accept-Language": "de"}
+    r = requests.get(url, headers=headers)
+    if r.status_code == 200:
+        html = r.text
+        match = re.search(r'([\d\.,]+)\s*(?:Hörer monatlich|monatliche Hörer)', html, re.IGNORECASE)
+        if match:
+            value = match.group(1)
+            value = value.replace('.', '').replace(',', '')
+            try:
+                return int(value)
+            except Exception as e:
+                log(f"Fehler bei der Konvertierung der monatlichen Hörer für {artist_id}: {e}")
+        else:
+            log(f"Kein passender Wert auf der Seite von Artist {artist_id} gefunden.")
+    else:
+        log(f"Fehler beim Abrufen der Artist-Seite {artist_id}: Status {r.status_code}")
+    return None
 
-######################################
-# Neue Funktion: Optisch ansprechende Darstellung der Suchergebnisse (Karteikarten)
-######################################
-def display_search_results(results):
-    st.title("Search Results")
-    for key, song in results.items():
-        cover_url = ""
-        track_url = ""
-        try:
-            url = f"https://api.spotify.com/v1/tracks/{song['track_id']}"
-            headers = {"Authorization": f"Bearer {SPOTIFY_TOKEN}"}
-            resp = requests.get(url, headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
-            if data.get("album") and data["album"].get("images"):
-                cover_url = data["album"]["images"][0].get("url", "")
-            track_url = data.get("external_urls", {}).get("spotify", "")
-        except Exception as e:
-            log(f"Fehler beim Abrufen des Covers für {song.get('track_name')}: {e}")
-        card_html = f"""
-        <div style="
-            border: 1px solid #ccc;
-            border-radius: 8px;
-            padding: 16px;
-            margin: 8px;
-            width: 300px;
-            box-shadow: 2px 2px 6px rgba(0,0,0,0.1);
-            ">
-            <div style="text-align: center;">
-                <img src="{cover_url}" alt="Cover" style="width: 100%; border-radius: 4px;">
-            </div>
-            <h3 style="margin: 8px 0 4px 0;">{song.get("track_name")}</h3>
-            <p style="margin: 4px 0;"><strong>Artist:</strong> {song.get("artist_name")}</p>
-            <p style="margin: 4px 0;"><strong>Release Date:</strong> {song.get("release_date")}</p>
-            <hr style="border: none; border-top: 1px solid #eee;">
-            <p style="margin: 4px 0;"><strong>Song Pop:</strong> {song.get("latest_measurement", {}).get("song_pop", 0)}</p>
-            <p style="margin: 4px 0;"><strong>Artist Pop:</strong> {song.get("latest_measurement", {}).get("artist_pop", 0)}</p>
-            <p style="margin: 4px 0;"><strong>Streams:</strong> {song.get("latest_measurement", {}).get("streams", 0)}</p>
-            <p style="margin: 4px 0;"><strong>Monthly Listeners:</strong> {song.get("latest_measurement", {}).get("monthly_listeners", 0)}</p>
-            <p style="margin: 4px 0;"><strong>Artist Followers:</strong> {song.get("latest_measurement", {}).get("artist_followers", 0)}</p>
-            <div style="text-align: center; margin-top: 8px;">
-                <a href="{track_url}" target="_blank" style="
-                    text-decoration: none;
-                    color: #1DB954;
-                    font-weight: bold;">Listen on Spotify</a>
-            </div>
-        </div>
-        """
-        st.markdown(card_html, unsafe_allow_html=True)
-
-######################################
-# Neue Funktion: Aktualisierung von Song-Daten via Spotify
-######################################
 def update_song_data(song, token):
     url = f"https://api.spotify.com/v1/tracks/{song['track_id']}"
     headers = {"Authorization": f"Bearer {token}"}
@@ -368,62 +323,14 @@ def song_exists_in_notion(track_id):
         return False
 
 ######################################
-# Sidebar: Suchfeld, Log-Fenster, Fortschrittsbalken
-######################################
-st.sidebar.title("Search")
-search_query = st.sidebar.text_input("Search by artist or song:")
-
-if "log_messages" not in st.session_state:
-    st.session_state.log_messages = []
-
-def log(msg):
-    st.session_state.log_messages.append(f"{datetime.datetime.now().strftime('%H:%M:%S')}: {msg}")
-    st.sidebar.text_area("Log", "\n".join(st.session_state.log_messages), height=200)
-
-def show_progress(progress, info):
-    pb = st.sidebar.progress(progress)
-    st.sidebar.write(info)
-    return pb
-
-######################################
-# Sidebar Buttons
-######################################
-st.sidebar.title("Actions")
-if st.sidebar.button("Get New Music"):
-    def run_get_new_music():
-        spotify_token = get_spotify_token()
-        log(f"Spotify Access Token: {spotify_token}")
-        all_songs = []
-        for pid in st.secrets["spotify"]["playlist_ids"]:
-            songs = get_playlist_songs(pid, spotify_token)
-            all_songs.extend(songs)
-        log(f"Gesammelte Songs: {len(all_songs)}")
-        for song in all_songs:
-            if song["track_id"]:
-                if song_exists_in_notion(song["track_id"]):
-                    log(f"{song['song_name']} von {song['artist_name']} existiert bereits.")
-                else:
-                    log(f"{song['song_name']} von {song['artist_name']} wird erstellt.")
-                    create_notion_page(song)
-            else:
-                log(f"{song['song_name']} hat keine Track ID und wird übersprungen.")
-    run_get_new_music()
-    log("Get New Music abgeschlossen. Bitte Seite neu laden, um die aktualisierten Daten zu sehen.")
-
-if st.sidebar.button("Get Data"):
-    msgs = fill_song_measurements()
-    for m in msgs:
-        log(m)
-
-######################################
-# Suchergebnisse im Hauptbereich
+# Suchfunktion: Suche in Songs-Datenbank
 ######################################
 def search_songs(query):
     query_lower = query.lower()
     results = {}
     for key, song in songs_metadata.items():
         if query_lower in song.get("track_name", "").lower() or query_lower in song.get("artist_name", "").lower():
-            # Aktualisiere die Daten für das Suchergebnis
+            # Aktualisiere für das Suchergebnis die aktuellen Spotify-Daten und lege neuen Measurement-Eintrag an
             details = update_song_data(song, SPOTIFY_TOKEN)
             new_meas_id = create_measurement_entry(song, details)
             update_song_measurements_relation(song["page_id"], new_meas_id)
@@ -431,6 +338,9 @@ def search_songs(query):
             results[key] = song
     return results
 
+######################################
+# Optisch ansprechende Darstellung: Karteikarten
+######################################
 def display_search_results(results):
     st.title("Search Results")
     for key, song in results.items():
@@ -479,12 +389,89 @@ def display_search_results(results):
         st.markdown(card_html, unsafe_allow_html=True)
 
 ######################################
-# Hauptbereich: Suchergebnisse
+# Sidebar: Suchfeld, Log-Fenster, Fortschrittsbalken
 ######################################
-results = {}
+st.sidebar.title("Search")
+search_query = st.sidebar.text_input("Search by artist or song:")
+
+if "log_messages" not in st.session_state:
+    st.session_state.log_messages = []
+
+def log(msg):
+    st.session_state.log_messages.append(f"{datetime.datetime.now().strftime('%H:%M:%S')}: {msg}")
+    st.sidebar.text_area("Log", "\n".join(st.session_state.log_messages), height=200)
+
+def show_progress(progress, info):
+    pb = st.sidebar.progress(progress)
+    st.sidebar.write(info)
+    return pb
+
+######################################
+# Sidebar Buttons
+######################################
+st.sidebar.title("Actions")
+if st.sidebar.button("Get New Music"):
+    def run_get_new_music():
+        spotify_token = get_spotify_token()
+        log(f"Spotify Access Token: {spotify_token}")
+        all_songs = []
+        for pid in st.secrets["spotify"]["playlist_ids"]:
+            songs = get_playlist_songs(pid, spotify_token)
+            all_songs.extend(songs)
+        log(f"Gesammelte Songs: {len(all_songs)}")
+        for song in all_songs:
+            if song["track_id"]:
+                if song_exists_in_notion(song["track_id"]):
+                    log(f"{song['song_name']} von {song['artist_name']} existiert bereits.")
+                else:
+                    log(f"{song['song_name']} von {song['artist_name']} wird erstellt.")
+                    create_notion_page(song)
+            else:
+                log(f"{song['song_name']} hat keine Track ID und wird übersprungen.")
+    run_get_new_music()
+    log("Get New Music abgeschlossen. Bitte Seite neu laden, um die aktualisierten Daten zu sehen.")
+
+if st.sidebar.button("Get Data"):
+    msgs = fill_song_measurements()
+    for m in msgs:
+        log(m)
+
+######################################
+# Hilfsfunktion: song_exists_in_notion
+######################################
+def song_exists_in_notion(track_id):
+    payload = {
+        "filter": {
+            "property": "Track ID",
+            "rich_text": {"equals": track_id}
+        }
+    }
+    response = requests.post(f"{notion_query_endpoint}/{songs_database_id}/query", headers=notion_headers, json=payload)
+    if response.status_code == 200:
+        results = response.json().get("results", [])
+        return len(results) > 0
+    else:
+        st.error("Fehler beim Abfragen der Notion-Datenbank: " + response.text)
+        return False
+
+######################################
+# Hauptbereich: Suchergebnisse anzeigen
+######################################
+def search_songs(query):
+    query_lower = query.lower()
+    results = {}
+    for key, song in songs_metadata.items():
+        if query_lower in song.get("track_name", "").lower() or query_lower in song.get("artist_name", "").lower():
+            details = update_song_data(song, SPOTIFY_TOKEN)
+            new_meas_id = create_measurement_entry(song, details)
+            update_song_measurements_relation(song["page_id"], new_meas_id)
+            song["latest_measurement"] = details
+            results[key] = song
+    return results
+
 if search_query:
-    results = search_songs(search_query)
-    display_search_results(results)
+    results_found = search_songs(search_query)
+    display_search_results(results_found)
 else:
     st.title("Search Results")
     st.write("Bitte einen Suchbegriff in der Sidebar eingeben.")
