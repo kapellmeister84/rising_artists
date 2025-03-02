@@ -484,6 +484,7 @@ df = pd.DataFrame(tracking_entries)
 
 if df.empty:
     st.write("Tracking-Daten noch nicht aktualisiert. Bitte klicke auf 'Update Popularity'.")
+    df_all = pd.DataFrame()  # df_all als leeres DataFrame definieren
 else:
     df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.tz_localize(None)
     df["track_name"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("track_name", "Unbekannter Track"))
@@ -492,96 +493,96 @@ else:
     df["spotify_track_id"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("spotify_track_id", ""))
     df_all = df[df["date"].notnull()]
 
-    # Top 10 Songs mit Hype Score
-    cumulative = []
-    for song_id, group in df_all.groupby("song_id"):
-        group = group.sort_values("date")
-        if group.empty:
-            continue
-        last_pop = group.iloc[-1]["popularity"]
-        last_growth = group.iloc[-1].get("growth")
-        if last_growth is None:
-            first_pop = group.iloc[0]["popularity"]
-            cumulative_growth = ((last_pop - first_pop) / first_pop) * 100 if first_pop and first_pop != 0 else 0
-        else:
-            cumulative_growth = last_growth
-        meta = metadata.get(song_id, {"track_name": "Unbekannter Track", "artist": "Unbekannt", "release_date": "", "spotify_track_id": ""})
-        # Update Artist-Daten on demand für Top 10 Anzeige
-        hype_score, _ = update_artist_on_demand(meta["artist"])
-        cumulative.append({
-            "song_id": song_id,
-            "track_name": meta["track_name"],
-            "artist": meta["artist"],
-            "release_date": meta["release_date"],
-            "spotify_track_id": meta["spotify_track_id"],
-            "last_popularity": last_pop,
-            "cumulative_growth": cumulative_growth,
-            "hype_score": hype_score if hype_score is not None else 0
-        })
-
-    cum_df = pd.DataFrame(cumulative)
-    if cum_df.empty:
-        st.write("Keine Daten für die Top 10 verfügbar.")
-        top10 = pd.DataFrame()
+# Top 10 Songs mit Hype Score
+cumulative = []
+for song_id, group in df_all.groupby("song_id"):
+    group = group.sort_values("date")
+    if group.empty:
+        continue
+    last_pop = group.iloc[-1]["popularity"]
+    last_growth = group.iloc[-1].get("growth")
+    if last_growth is None:
+        first_pop = group.iloc[0]["popularity"]
+        cumulative_growth = ((last_pop - first_pop) / first_pop) * 100 if first_pop and first_pop != 0 else 0
     else:
-        top10 = cum_df[cum_df["cumulative_growth"] > 0].sort_values("cumulative_growth", ascending=False).head(10)
+        cumulative_growth = last_growth
+    meta = metadata.get(song_id, {"track_name": "Unbekannter Track", "artist": "Unbekannt", "release_date": "", "spotify_track_id": ""})
+    # Update Artist-Daten on demand für Top 10 Anzeige
+    hype_score, _ = update_artist_on_demand(meta["artist"])
+    cumulative.append({
+        "song_id": song_id,
+        "track_name": meta["track_name"],
+        "artist": meta["artist"],
+        "release_date": meta["release_date"],
+        "spotify_track_id": meta["spotify_track_id"],
+        "last_popularity": last_pop,
+        "cumulative_growth": cumulative_growth,
+        "hype_score": hype_score if hype_score is not None else 0
+    })
 
-    num_columns = 5
-    rows = [top10.iloc[i:i+num_columns] for i in range(0, len(top10), num_columns)]
-    for row_df in rows:
-        cols = st.columns(num_columns)
-        for idx, (_, row) in enumerate(row_df.iterrows()):
-            cover_url, spotify_link = ("", "")
-            if row["spotify_track_id"]:
-                cover_url, spotify_link = get_spotify_data(row["spotify_track_id"])
-            with cols[idx]:
-                st.markdown(f"{row['track_name']}  \nHype Score: {row['hype_score']}")
-                if cover_url and spotify_link:
-                    st.markdown(f'<a href="{spotify_link}" target="_blank"><img src="{cover_url}" style="width:100%;" /></a>', unsafe_allow_html=True)
-                elif cover_url:
-                    st.image(cover_url, use_container_width=True)
-                else:
-                    st.write("Kein Cover")
-                st.markdown(f"<div style='text-align: center;'>Release: {row['release_date']}</div>", unsafe_allow_html=True)
-                st.markdown(f"<div style='text-align: center;'>Popularity: {row['last_popularity']:.1f}</div>", unsafe_allow_html=True)
-                st.markdown(f"<div style='text-align: center; font-weight: bold;'>Growth: {row['cumulative_growth']:.1f}%</div>", unsafe_allow_html=True)
-                show_graph = st.checkbox("Graph anzeigen / ausblenden", key=f"toggle_{row['song_id']}")
-                if show_graph:
-                    with st.spinner("Graph wird geladen..."):
-                        fresh_entries = get_tracking_entries_for_song(row["song_id"])
-                        if fresh_entries:
-                            df_new = pd.DataFrame(fresh_entries)
-                            df_new["date"] = pd.to_datetime(df_new["date"], errors="coerce").dt.tz_localize(None)
-                            song_history = df_new.sort_values("date")
-                            if len(song_history) == 1:
-                                fig = px.scatter(song_history, x="date", y="popularity",
-                                                 title=f"{row['track_name']} - {row['artist']}",
-                                                 labels={"date": "Datum", "popularity": "Popularity Score"})
-                            else:
-                                fig = px.line(song_history, x="date", y="popularity",
-                                              title=f"{row['track_name']} - {row['artist']}",
-                                              labels={"date": "Datum", "popularity": "Popularity Score"},
-                                              markers=True)
-                            fig.update_yaxes(range=[0, 100])
-                            st.plotly_chart(fig, use_container_width=True, key=f"chart_{row['song_id']}_{time.time()}")
-                            
-                            show_streams_graph = st.checkbox("Stream Wachstum anzeigen", key=f"toggle_stream_{row['song_id']}")
-                            if show_streams_graph:
-                                if "Streams" in song_history.columns and not song_history["Streams"].isnull().all():
-                                    if len(song_history) == 1:
-                                        fig_stream = px.scatter(song_history, x="date", y="Streams",
-                                                                title=f"{row['track_name']} - Stream Wachstum",
-                                                                labels={"date": "Datum", "Streams": "Streams"})
-                                    else:
-                                        fig_stream = px.line(song_history, x="date", y="Streams",
-                                                            title=f"{row['track_name']} - Stream Wachstum",
-                                                            labels={"date": "Datum", "Streams": "Streams"},
-                                                            markers=True)
-                                    st.plotly_chart(fig_stream, use_container_width=True, key=f"chart_stream_{row['song_id']}_{time.time()}")
-                                else:
-                                    st.write("Keine Stream-Daten verfügbar")
+cum_df = pd.DataFrame(cumulative)
+if cum_df.empty:
+    st.write("Keine Daten für die Top 10 verfügbar.")
+    top10 = pd.DataFrame()
+else:
+    top10 = cum_df[cum_df["cumulative_growth"] > 0].sort_values("cumulative_growth", ascending=False).head(10)
+
+num_columns = 5
+rows = [top10.iloc[i:i+num_columns] for i in range(0, len(top10), num_columns)]
+for row_df in rows:
+    cols = st.columns(num_columns)
+    for idx, (_, row) in enumerate(row_df.iterrows()):
+        cover_url, spotify_link = ("", "")
+        if row["spotify_track_id"]:
+            cover_url, spotify_link = get_spotify_data(row["spotify_track_id"])
+        with cols[idx]:
+            st.markdown(f"{row['track_name']}  \nHype Score: {row['hype_score']}")
+            if cover_url and spotify_link:
+                st.markdown(f'<a href="{spotify_link}" target="_blank"><img src="{cover_url}" style="width:100%;" /></a>', unsafe_allow_html=True)
+            elif cover_url:
+                st.image(cover_url, use_container_width=True)
+            else:
+                st.write("Kein Cover")
+            st.markdown(f"<div style='text-align: center;'>Release: {row['release_date']}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='text-align: center;'>Popularity: {row['last_popularity']:.1f}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='text-align: center; font-weight: bold;'>Growth: {row['cumulative_growth']:.1f}%</div>", unsafe_allow_html=True)
+            show_graph = st.checkbox("Graph anzeigen / ausblenden", key=f"toggle_{row['song_id']}")
+            if show_graph:
+                with st.spinner("Graph wird geladen..."):
+                    fresh_entries = get_tracking_entries_for_song(row["song_id"])
+                    if fresh_entries:
+                        df_new = pd.DataFrame(fresh_entries)
+                        df_new["date"] = pd.to_datetime(df_new["date"], errors="coerce").dt.tz_localize(None)
+                        song_history = df_new.sort_values("date")
+                        if len(song_history) == 1:
+                            fig = px.scatter(song_history, x="date", y="popularity",
+                                             title=f"{row['track_name']} - {row['artist']}",
+                                             labels={"date": "Datum", "popularity": "Popularity Score"})
                         else:
-                            st.write("Keine aktuellen Tracking-Daten verfügbar")
+                            fig = px.line(song_history, x="date", y="popularity",
+                                          title=f"{row['track_name']} - {row['artist']}",
+                                          labels={"date": "Datum", "popularity": "Popularity Score"},
+                                          markers=True)
+                        fig.update_yaxes(range=[0, 100])
+                        st.plotly_chart(fig, use_container_width=True, key=f"chart_{row['song_id']}_{time.time()}")
+                        
+                        show_streams_graph = st.checkbox("Stream Wachstum anzeigen", key=f"toggle_stream_{row['song_id']}")
+                        if show_streams_graph:
+                            if "Streams" in song_history.columns and not song_history["Streams"].isnull().all():
+                                if len(song_history) == 1:
+                                    fig_stream = px.scatter(song_history, x="date", y="Streams",
+                                                            title=f"{row['track_name']} - Stream Wachstum",
+                                                            labels={"date": "Datum", "Streams": "Streams"})
+                                else:
+                                    fig_stream = px.line(song_history, x="date", y="Streams",
+                                                        title=f"{row['track_name']} - Stream Wachstum",
+                                                        labels={"date": "Datum", "Streams": "Streams"},
+                                                        markers=True)
+                                st.plotly_chart(fig_stream, use_container_width=True, key=f"chart_stream_{row['song_id']}_{time.time()}")
+                            else:
+                                st.write("Keine Stream-Daten verfügbar")
+                    else:
+                        st.write("Keine aktuellen Tracking-Daten verfügbar")
 
 st.header("Songs filtern")
 if submitted and not df_all.empty:
