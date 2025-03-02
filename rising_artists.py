@@ -15,10 +15,10 @@ st.set_page_config(layout="wide")
 set_dark_mode()
 set_background("https://wallpapershome.com/images/pages/pic_h/26334.jpg")
 
-# Globale Log-Liste initialisieren
+# Globale Log-Liste
 LOG_MESSAGES = []
 
-# Log in der Sidebar in einem scrollbaren Expander anzeigen
+# Log in der Sidebar in einem scrollbaren Expander
 with st.sidebar.expander("Log-Details", expanded=True):
     log_placeholder = st.empty()
 
@@ -26,7 +26,6 @@ def log(msg):
     timestamp = datetime.datetime.now().strftime('%H:%M:%S')
     global LOG_MESSAGES
     LOG_MESSAGES.append(f"{timestamp} - {msg}")
-    # Aktualisiere den Log-Bereich
     log_placeholder.text("\n".join(LOG_MESSAGES))
 
 # === Notion-Konfiguration ===
@@ -107,8 +106,9 @@ def parse_rollup_text(rollup):
                     texts.append(date_info["start"])
     return " ".join(texts).strip()
 
+# In Funktionen, die in Threads laufen, log() entfernen:
 def get_track_name_from_page(page_id):
-    log(f"Lade Track Name für Seite {page_id}...")
+    # Log-Aufruf entfernt, um NoSessionContext zu vermeiden
     url = f"{notion_page_endpoint}/{page_id}"
     response = requests.get(url, headers=notion_headers)
     if response.status_code == 200:
@@ -642,3 +642,4 @@ Popularity: {row['last_popularity']:.1f} | Streams: {row['last_streams']} | Hype
 else:
     if not df.empty:
         st.write("Bitte benutze das Filterformular in der Sidebar, um Ergebnisse anzuzeigen.")
+        
