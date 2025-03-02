@@ -6,10 +6,6 @@ import streamlit as st
 import requests, json, time, hashlib
 from datetime import datetime
 
-# Accessing secrets (Notion token, Database ID, etc.)
-NOTION_TOKEN = st.secrets["NOTION_TOKEN"]
-DATABASE_ID = st.secrets["DATABASE_ID"]
-NOTION_VERSION = st.secrets["NOTION_VERSION"] if "NOTION_VERSION" in st.secrets else "2022-06-28"
 
 st.set_page_config(page_title="playlist scanner", layout="wide", initial_sidebar_state="expanded")
 
