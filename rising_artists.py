@@ -8,12 +8,12 @@ import plotly.express as px
 from concurrent.futures import ThreadPoolExecutor
 import uuid
 import streamlit as st
-from utils import set_background
+from utils import set_background, set_dark_mode
 
 
 
 st.set_page_config(layout="wide")
-
+set_dark_mode()
 set_background("https://wallpapershome.com/images/pages/pic_h/26334.jpg")
 
 
