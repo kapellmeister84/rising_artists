@@ -94,7 +94,8 @@ def get_tracking_entries():
     Extrahiert aus allen Seiten der Tracking-Datenbank (cached):
       - Popularity Score,
       - Zeitstempel aus dem Property "Date",
-      - die Song-ID aus der Relation "Song".
+      - die Song-ID aus der Relation "Song",
+      - Growth (sofern vorhanden).
     """
     pages = get_all_tracking_pages()
     entries = []
@@ -103,6 +104,7 @@ def get_tracking_entries():
         props = page.get("properties", {})
         pop = props.get("Popularity Score", {}).get("number")
         date_str = props.get("Date", {}).get("date", {}).get("start")
+        growth = props.get("Growth", {}).get("number")  # kann None sein
         song_relations = props.get("Song", {}).get("relation", [])
         for relation in song_relations:
             song_id = relation.get("id")
@@ -110,7 +112,8 @@ def get_tracking_entries():
                 "entry_id": entry_id,
                 "song_id": song_id,
                 "date": date_str,
-                "popularity": pop
+                "popularity": pop,
+                "growth": growth
             })
     return entries
 
@@ -275,7 +278,8 @@ def update_popularity():
     st.success("Popularity wurde aktualisiert!")
     status_text.empty()
     
-    # Growth-Berechnung: Vergleiche die beiden neuesten Messwerte jedes Songs und update den Growth-Wert
+    # Growth-Berechnung: Für jeden Song werden die beiden neuesten Messwerte verglichen und der Growth-Wert
+    # wird in den neuesten Eintrag geschrieben.
     st.write("Berechne Growth für jeden Song...")
     # Cache leeren, um die aktuellsten Daten zu erhalten:
     get_all_tracking_pages.clear()
@@ -284,17 +288,16 @@ def update_popularity():
     df_update = pd.DataFrame(updated_entries)
     df_update["date"] = pd.to_datetime(df_update["date"], errors="coerce")
     df_update = df_update.dropna(subset=["date", "song_id"])
+    # Für jeden Song: Nutze den Growth-Wert der neuesten Messung aus der DB
     for song_id, group in df_update.groupby("song_id"):
         group = group.sort_values("date")
-        if len(group) >= 2:
-            prev = group.iloc[-2]["popularity"]
-            curr = group.iloc[-1]["popularity"]
-            growth = ((curr - prev) / prev) * 100 if prev and prev != 0 else 0
-        else:
-            growth = 0
+        # Hier nehmen wir den Growth-Wert des letzten Eintrags – falls vorhanden
+        latest_growth = group.iloc[-1].get("growth")
+        # Nur wenn latest_growth vorhanden und > 0, sonst 0
+        final_growth = latest_growth if latest_growth and latest_growth > 0 else 0
         latest_entry_id = group.iloc[-1]["entry_id"]
-        st.write(f"Song {song_id}: Growth = {growth:.1f}% (Vergleich: {prev} -> {curr})")
-        update_growth_for_measurement(latest_entry_id, growth)
+        st.write(f"Song {song_id}: Growth = {final_growth:.1f}%")
+        update_growth_for_measurement(latest_entry_id, final_growth)
 
 # --- Sidebar: Buttons und Filterformular ---
 with st.sidebar:
@@ -307,6 +310,7 @@ with st.sidebar:
     with st.form("filter_form"):
         search_query = st.text_input("Song/Artist Suche", "")
         filter_pop_range = st.slider("Popularity Range (letzter Messwert)", 0, 100, (0, 100), step=1, key="filter_pop")
+        # Nur Tracks mit Growth > 0 werden berücksichtigt
         filter_growth_threshold = st.number_input("Min. Growth % (zwischen den letzten beiden Messungen)", min_value=0.0, value=0.0, step=0.5, key="filter_growth")
         filter_sort_option = st.selectbox("Sortiere nach", ["Popularity", "Release Date"], key="filter_sort")
         filter_timeframe_option = st.selectbox("Zeitraum für Graphen (Ende)", ["3 Tage", "1 Woche", "2 Wochen", "3 Wochen"], key="filter_timeframe")
@@ -338,9 +342,14 @@ for song_id, group in df_all.groupby("song_id"):
     group = group.sort_values("date")
     if group.empty:
         continue
-    first_pop = group.iloc[0]["popularity"]
     last_pop = group.iloc[-1]["popularity"]
-    growth = ((last_pop - first_pop) / first_pop) * 100 if first_pop and first_pop != 0 else 0
+    # Verwende den Growth-Wert des letzten Eintrags (aus der DB) – falls vorhanden, sonst berechne kumulativ
+    last_growth = group.iloc[-1].get("growth")
+    if last_growth is None:
+        first_pop = group.iloc[0]["popularity"]
+        cumulative_growth = ((last_pop - first_pop) / first_pop) * 100 if first_pop and first_pop != 0 else 0
+    else:
+        cumulative_growth = last_growth
     meta = metadata.get(song_id, {"track_name": "Unbekannter Track", "artist": "Unbekannt", "release_date": "", "spotify_track_id": ""})
     cumulative.append({
         "song_id": song_id,
@@ -349,7 +358,7 @@ for song_id, group in df_all.groupby("song_id"):
         "release_date": meta["release_date"],
         "spotify_track_id": meta["spotify_track_id"],
         "last_popularity": last_pop,
-        "cumulative_growth": growth
+        "cumulative_growth": cumulative_growth
     })
 
 cum_df = pd.DataFrame(cumulative)
@@ -357,7 +366,8 @@ if cum_df.empty:
     st.write("Keine Daten für die Top 10 verfügbar.")
     top10 = pd.DataFrame()
 else:
-    top10 = cum_df.sort_values("cumulative_growth", ascending=False).head(10)
+    # Nur Songs mit Growth > 0 berücksichtigen und die 10 mit den größten Growth-Werten auswählen
+    top10 = cum_df[cum_df["cumulative_growth"] > 0].sort_values("cumulative_growth", ascending=False).head(10)
 
 num_columns = 5
 rows = [top10.iloc[i:i+num_columns] for i in range(0, len(top10), num_columns)]
@@ -402,16 +412,15 @@ if submitted:
     for song_id, group in df_all.groupby("song_id"):
         group = group.sort_values("date")
         last_pop = group.iloc[-1]["popularity"]
-        growth_val = 0.0
+        growth_val = 0
         if len(group) >= 2:
             prev_pop = group.iloc[-2]["popularity"]
-            if prev_pop and prev_pop != 0:
-                growth_val = ((last_pop - prev_pop) / prev_pop) * 100
+            growth_val = ((last_pop - prev_pop) / prev_pop) * 100 if prev_pop and prev_pop != 0 else 0
         meta = metadata.get(song_id, {"track_name": "Unbekannter Track", "artist": "Unbekannt", "release_date": "", "spotify_track_id": ""})
         last_data.append({
             "song_id": song_id,
             "track_name": meta.get("track_name", "Unbekannter Track"),
-            "artist": meta.get("artist", "Unbekannt"),
+            "artist": meta.get("artist", "Unbekannter"),
             "release_date": meta.get("release_date", ""),
             "spotify_track_id": meta.get("spotify_track_id", ""),
             "last_popularity": last_pop,
