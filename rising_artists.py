@@ -3,16 +3,15 @@ import requests
 import datetime
 import base64
 import json
+import re
 
 #########################
 # Notion Configuration  #
 #########################
-# Song and Measurements database IDs
 song_database_id = st.secrets["notion"]["song-database"]
 measurements_database_id = st.secrets["notion"]["measurements-database"]
 notion_secret = st.secrets["notion"]["secret"]
 
-# Endpoints and headers for Notion
 notion_page_endpoint = "https://api.notion.com/v1/pages"
 song_query_endpoint = f"https://api.notion.com/v1/databases/{song_database_id}/query"
 measurements_query_endpoint = f"https://api.notion.com/v1/databases/{measurements_database_id}/query"
@@ -31,9 +30,6 @@ spotify_client_id = st.secrets["spotify"]["client_id"]
 spotify_client_secret = st.secrets["spotify"]["client_secret"]
 
 def get_spotify_token():
-    """
-    Get a Spotify access token using the Client Credentials Flow.
-    """
     auth_str = f"{spotify_client_id}:{spotify_client_secret}"
     b64_auth_str = base64.b64encode(auth_str.encode()).decode()
     headers = {
@@ -56,6 +52,26 @@ def get_artist_popularity(artist_id, token):
         return response.json().get("popularity", 0)
     return 0
 
+def get_monthly_listeners(artist_id):
+    """
+    Scrape the monthly listeners from the Spotify artist page.
+    """
+    url = f"https://open.spotify.com/artist/{artist_id}"
+    headers = {"User-Agent": "Mozilla/5.0", "Accept-Language": "en"}
+    r = requests.get(url, headers=headers)
+    if r.status_code == 200:
+        html = r.text
+        match = re.search(r'([\d\.,]+)\s*(?:Monthly Listeners)', html, re.IGNORECASE)
+        if match:
+            value = match.group(1)
+            # Remove thousand separators (adjust as needed)
+            value = value.replace('.', '').replace(',', '')
+            try:
+                return int(value)
+            except:
+                return 0
+    return 0
+
 def get_playlist_songs(playlist_id, token):
     headers = {"Authorization": f"Bearer {token}"}
     url = f"https://api.spotify.com/v1/playlists/{playlist_id}"
@@ -71,16 +87,12 @@ def get_playlist_songs(playlist_id, token):
             artist_name = ", ".join(artist_names)
             artist_id = artists[0].get("id") if artists and artists[0].get("id") else ""
             track_id = track.get("id")
-            # Get song popularity from track data
             song_pop = track.get("popularity", 0)
-            # Get Release Date and Country Code from the album
             release_date = track.get("album", {}).get("release_date")
             available_markets = track.get("album", {}).get("available_markets", [])
             country_code = available_markets[0] if available_markets else ""
-            # Get artist popularity via additional request
             artist_pop = get_artist_popularity(artist_id, token) if artist_id else 0
-            # Streams: will be updated later via the playcount function
-            streams = 0
+            streams = 0  # Will be updated later via playcount
             songs.append({
                 "song_name": song_name,
                 "artist_name": artist_name,
@@ -95,10 +107,6 @@ def get_playlist_songs(playlist_id, token):
     return songs
 
 def query_song_page(track_id):
-    """
-    Check if a song with the given track_id exists in the song database.
-    Return its page ID if found.
-    """
     payload = {
         "filter": {
             "property": "Track ID",
@@ -133,7 +141,6 @@ def create_song_page(song_data):
             "Track ID": {
                 "rich_text": [{ "text": { "content": song_data["track_id"] or "" } }]
             },
-            # Properties updated on each scan:
             "Release Date": {
                 "date": { "start": song_data["release_date"] or "" }
             },
@@ -168,25 +175,11 @@ def update_song_page(page_id, song_data):
         return f"Error updating {song_data['song_name']}: {response.text}"
 
 def query_measurement_entry(song_page_id, week):
-    """
-    Check if there is already a measurement entry for the given song (via relation)
-    for the specified week. Return the measurement page ID if found.
-    """
     payload = {
         "filter": {
             "and": [
-                {
-                    "property": "Name",
-                    "rich_text": {
-                        "equals": week
-                    }
-                },
-                {
-                    "property": "Song",
-                    "relation": {
-                        "contains": song_page_id
-                    }
-                }
+                {"property": "Name", "rich_text": {"equals": week}},
+                {"property": "Song", "relation": {"contains": song_page_id}}
             ]
         }
     }
@@ -199,7 +192,7 @@ def query_measurement_entry(song_page_id, week):
         st.error("Error querying the Measurements database: " + response.text)
     return None
 
-def create_measurement_entry(song_page_id, song_name, song_pop, artist_pop, streams, week):
+def create_measurement_entry(song_page_id, song_name, song_pop, artist_pop, streams, monthly_listeners, artist_followers, week):
     payload = {
         "parent": { "database_id": measurements_database_id },
         "properties": {
@@ -209,15 +202,11 @@ def create_measurement_entry(song_page_id, song_name, song_pop, artist_pop, stre
             "Song": {
                 "relation": [{ "id": song_page_id }]
             },
-            "Song Pop": {
-                "number": song_pop
-            },
-            "Artist Pop": {
-                "number": artist_pop
-            },
-            "Streams": {
-                "number": streams
-            }
+            "Song Pop": {"number": song_pop},
+            "Artist Pop": {"number": artist_pop},
+            "Streams": {"number": streams},
+            "Monthly Listeners": {"number": monthly_listeners},
+            "Artist Followers": {"number": artist_followers}
         }
     }
     response = requests.post(notion_page_endpoint, headers=notion_headers, json=payload)
@@ -226,13 +215,15 @@ def create_measurement_entry(song_page_id, song_name, song_pop, artist_pop, stre
     else:
         return f"Error creating measurement for {song_name}: {response.text}"
 
-def update_measurement_entry(measurement_page_id, song_pop, artist_pop, streams):
+def update_measurement_entry(measurement_page_id, song_pop, artist_pop, streams, monthly_listeners, artist_followers):
     url = f"https://api.notion.com/v1/pages/{measurement_page_id}"
     payload = {
         "properties": {
             "Song Pop": {"number": song_pop},
             "Artist Pop": {"number": artist_pop},
-            "Streams": {"number": streams}
+            "Streams": {"number": streams},
+            "Monthly Listeners": {"number": monthly_listeners},
+            "Artist Followers": {"number": artist_followers}
         }
     }
     response = requests.patch(url, headers=notion_headers, json=payload)
@@ -240,6 +231,55 @@ def update_measurement_entry(measurement_page_id, song_pop, artist_pop, streams)
         return "Measurement updated."
     else:
         return f"Error updating measurement: {response.text}"
+
+def update_song_data(song, token):
+    url = f"https://api.spotify.com/v1/tracks/{song['track_id']}"
+    headers = {"Authorization": f"Bearer {token}"}
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        data = response.json()
+        release_date = data.get("album", {}).get("release_date")
+        available_markets = data.get("album", {}).get("available_markets", [])
+        country_code = available_markets[0] if available_markets else ""
+        song_pop = data.get("popularity", 0)
+        artists = data.get("artists", [])
+        artist_id = artists[0].get("id") if artists and artists[0].get("id") else ""
+        artist_pop = get_artist_popularity(artist_id, token) if artist_id else 0
+        monthly_listeners = get_monthly_listeners(artist_id) if artist_id else 0
+        artist_followers = 0
+        if artist_id:
+            artist_url = f"https://api.spotify.com/v1/artists/{artist_id}"
+            artist_resp = requests.get(artist_url, headers={"Authorization": f"Bearer {token}"})
+            if artist_resp.status_code == 200:
+                artist_followers = artist_resp.json().get("followers", {}).get("total", 0)
+        streams = get_spotify_playcount(song["track_id"], token)
+        return {
+            "song_name": data.get("name"),
+            "release_date": release_date,
+            "country_code": country_code,
+            "song_pop": song_pop,
+            "artist_pop": artist_pop,
+            "streams": streams,
+            "monthly_listeners": monthly_listeners,
+            "artist_followers": artist_followers
+        }
+    else:
+        st.error(f"Error fetching data for track {song['track_id']}: {response.text}")
+        return {}
+
+def get_spotify_playcount(track_id, token):
+    variables = json.dumps({"uri": f"spotify:track:{track_id}"})
+    extensions = json.dumps({
+        "persistedQuery": {
+            "version": 1,
+            "sha256Hash": "26cd58ab86ebba80196c41c3d48a4324c619e9a9d7df26ecca22417e0c50c6a4"
+        }
+    })
+    params = {"operationName": "getTrack", "variables": variables, "extensions": extensions}
+    headers = {"Authorization": f"Bearer {token}"}
+    response = requests.get("https://api-partner.spotify.com/pathfinder/v1/query", headers=headers, params=params)
+    response.raise_for_status()
+    return int(response.json()["data"]["trackUnion"].get("playcount", 0))
 
 def get_new_music():
     spotify_token = get_spotify_token()
@@ -260,72 +300,38 @@ def get_new_music():
             else:
                 msg, song_page_id = create_song_page(song)
                 messages.append(msg)
+            # Get complete updated data (including streams, monthly listeners, followers)
+            updated = update_song_data(song, spotify_token)
             meas_id = query_measurement_entry(song_page_id, current_week)
             if meas_id:
-                msg = update_measurement_entry(meas_id, song["song_pop"], song["artist_pop"], song["streams"])
-                messages.append(f"{song['song_name']}: {msg}")
+                msg2 = update_measurement_entry(
+                    meas_id,
+                    updated["song_pop"],
+                    updated["artist_pop"],
+                    updated["streams"],
+                    updated["monthly_listeners"],
+                    updated["artist_followers"]
+                )
+                messages.append(f"{song['song_name']}: {msg2}")
             else:
-                msg = create_measurement_entry(song_page_id, song["song_name"], song["song_pop"], song["artist_pop"], song["streams"], current_week)
-                messages.append(msg)
+                msg2 = create_measurement_entry(
+                    song_page_id,
+                    song["song_name"],
+                    updated["song_pop"],
+                    updated["artist_pop"],
+                    updated["streams"],
+                    updated["monthly_listeners"],
+                    updated["artist_followers"],
+                    current_week
+                )
+                messages.append(msg2)
         else:
             messages.append(f"{song['song_name']} has no Track ID and will be skipped.")
     return messages
 
-#########################
-# NEW: Playcount via Spotify Partner API
-#########################
-def get_spotify_playcount(track_id, token):
-    variables = json.dumps({"uri": f"spotify:track:{track_id}"})
-    extensions = json.dumps({
-        "persistedQuery": {
-            "version": 1,
-            "sha256Hash": "26cd58ab86ebba80196c41c3d48a4324c619e9a9d7df26ecca22417e0c50c6a4"
-        }
-    })
-    params = {"operationName": "getTrack", "variables": variables, "extensions": extensions}
-    headers = {"Authorization": f"Bearer {token}"}
-    response = requests.get("https://api-partner.spotify.com/pathfinder/v1/query", headers=headers, params=params)
-    response.raise_for_status()
-    return int(response.json()["data"]["trackUnion"].get("playcount", 0))
-
-def update_song_data(song, token):
-    """
-    For a given song (by track_id), fetch the latest Spotify data.
-    Returns a dict with updated values.
-    """
-    url = f"https://api.spotify.com/v1/tracks/{song['track_id']}"
-    headers = {"Authorization": f"Bearer {token}"}
-    response = requests.get(url, headers=headers)
-    if response.status_code == 200:
-        data = response.json()
-        release_date = data.get("album", {}).get("release_date")
-        available_markets = data.get("album", {}).get("available_markets", [])
-        country_code = available_markets[0] if available_markets else ""
-        song_pop = data.get("popularity", 0)
-        artists = data.get("artists", [])
-        artist_id = artists[0].get("id") if artists and artists[0].get("id") else ""
-        artist_pop = get_artist_popularity(artist_id, token) if artist_id else 0
-        # Retrieve streams (playcount) using the new method
-        streams = get_spotify_playcount(song["track_id"], token)
-        return {
-            "song_name": data.get("name"),
-            "release_date": release_date,
-            "country_code": country_code,
-            "song_pop": song_pop,
-            "artist_pop": artist_pop,
-            "streams": streams
-        }
-    else:
-        st.error(f"Error fetching data for track {song['track_id']}: {response.text}")
-        return {}
-
 def update_song_measurements():
-    """
-    For every song in the song database, fetch updated Spotify data and update its measurement entry.
-    """
     spotify_token = get_spotify_token()
     st.write("Spotify Access Token:", spotify_token)
-    # Query all songs from the song database
     payload = {}
     response = requests.post(song_query_endpoint, headers=notion_headers, json=payload)
     songs = []
@@ -346,16 +352,32 @@ def update_song_measurements():
     messages = []
     current_week = f"KW {datetime.date.today().isocalendar()[1]}"
     for song in songs:
-        updated_data = update_song_data(song, spotify_token)
-        if updated_data:
-            msg = update_song_page(song["page_id"], updated_data)
+        updated = update_song_data(song, spotify_token)
+        if updated:
+            msg = update_song_page(song["page_id"], updated)
             messages.append(msg)
             meas_id = query_measurement_entry(song["page_id"], current_week)
             if meas_id:
-                msg2 = update_measurement_entry(meas_id, updated_data["song_pop"], updated_data["artist_pop"], updated_data["streams"])
+                msg2 = update_measurement_entry(
+                    meas_id,
+                    updated["song_pop"],
+                    updated["artist_pop"],
+                    updated["streams"],
+                    updated["monthly_listeners"],
+                    updated["artist_followers"]
+                )
                 messages.append(f"Measurement for song (ID: {song['track_id']}): {msg2}")
             else:
-                msg2 = create_measurement_entry(song["page_id"], "Unknown", updated_data["song_pop"], updated_data["artist_pop"], updated_data["streams"], current_week)
+                msg2 = create_measurement_entry(
+                    song["page_id"],
+                    "Unknown",
+                    updated["song_pop"],
+                    updated["artist_pop"],
+                    updated["streams"],
+                    updated["monthly_listeners"],
+                    updated["artist_followers"],
+                    current_week
+                )
                 messages.append(msg2)
     return messages
 
@@ -364,7 +386,6 @@ def update_song_measurements():
 #########################
 st.title("Spotify to Notion Music Sync")
 
-# Sidebar buttons for actions
 if st.sidebar.button("Get New Music"):
     st.write("Fetching new music and updating measurements...")
     results = get_new_music()
