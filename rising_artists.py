@@ -14,7 +14,8 @@ set_dark_mode()
 set_background("https://wallpapershome.com/images/pages/pic_h/26334.jpg")
 
 # === Notion-Konfiguration ===
-tracking_db_id = "1a9b6204cede80e29338ede2c76999f2"  # Tracking-Datenbank (enthält Rollups für "Artist" und "Release Date", Relation "Song")
+tracking_db_id = "1a9b6204cede80e29338ede2c76999f2"  # Weeks-/Tracking-Datenbank
+songs_database_id = "1a9b6204cede8006b67fd247dc660ba4"  # Songs-Datenbank
 notion_secret = "secret_yYvZbk7zcKy0Joe3usdCHMbbZmAFHnCKrF7NvEkWY6E"
 notion_query_endpoint = "https://api.notion.com/v1/databases"
 notion_page_endpoint = "https://api.notion.com/v1/pages"
@@ -72,11 +73,17 @@ def update_growth_for_measurement(entry_id, growth):
     response = requests.patch(url, headers=notion_headers, json=payload)
     response.raise_for_status()
 
+def update_streams_for_measurement(entry_id, streams):
+    url = f"{notion_page_endpoint}/{entry_id}"
+    payload = {"properties": {"Streams": {"number": streams}}}
+    response = requests.patch(url, headers=notion_headers, json=payload)
+    response.raise_for_status()
+
 @st.cache_data(show_spinner=False)
 def get_all_tracking_pages():
     url = f"{notion_query_endpoint}/{tracking_db_id}/query"
     payload = {
-        "page_size": 100  # Hier wird die maximale Anzahl der Ergebnisse pro Anfrage gesetzt
+        "page_size": 100
     }
     pages = []
     has_more = True
@@ -163,6 +170,23 @@ def get_metadata_from_tracking_db():
             "spotify_track_id": spotify_track_id
         }
     return metadata
+
+# --- Funktion zum Abrufen des Spotify-Playcounts (Streams) ---
+def get_spotify_playcount(track_id, token):
+    variables = json.dumps({"uri": f"spotify:track:{track_id}"})
+    extensions = json.dumps({
+        "persistedQuery": {
+            "version": 1,
+            "sha256Hash": "26cd58ab86ebba80196c41c3d48a4324c619e9a9d7df26ecca22417e0c50c6a4"
+        }
+    })
+    params = {"operationName": "getTrack", "variables": variables, "extensions": extensions}
+    url = "https://api-partner.spotify.com/pathfinder/v1/query"
+    headers = {"Authorization": f"Bearer {token}"}
+    response = requests.get(url, headers=headers, params=params)
+    response.raise_for_status()
+    data = response.json()
+    return int(data["data"]["trackUnion"].get("playcount", 0))
 
 # --- Platzhalterfunktionen für Buttons ---
 def get_new_music():
@@ -287,6 +311,56 @@ def update_popularity():
         latest_entry_id = group.iloc[-1]["entry_id"]
         st.write(f"Song {song_id}: Growth = {growth:.1f}% (Vergleich: {prev} -> {curr})")
         update_growth_for_measurement(latest_entry_id, growth)
+    
+    # --- Neue Streams-Aktualisierung ---
+    st.write("Aktualisiere Streams für jeden Song...")
+    # Hol die aktuellsten Daten:
+    st.cache_data.clear(get_all_tracking_pages)
+    st.cache_data.clear(get_tracking_entries)
+    updated_entries = get_tracking_entries()
+    df_update = pd.DataFrame(updated_entries)
+    df_update["date"] = pd.to_datetime(df_update["date"], errors="coerce")
+    df_update = df_update.dropna(subset=["date", "song_id"])
+    # Für jeden Song: Hole aus den Metadaten den Spotify-Track-ID und rufe den Playcount ab
+    metadata = get_metadata_from_tracking_db()
+    for song_id, group in df_update.groupby("song_id"):
+        group = group.sort_values("date")
+        latest_entry_id = group.iloc[-1]["entry_id"]
+        song_meta = metadata.get(song_id, {})
+        spotify_track_id = song_meta.get("spotify_track_id", "")
+        if spotify_track_id:
+            try:
+                streams = get_spotify_playcount(spotify_track_id, SPOTIFY_TOKEN)
+            except Exception as e:
+                st.write(f"Fehler beim Abrufen von Streams für {song_id}: {e}")
+                streams = 0
+        else:
+            streams = 0
+        st.write(f"Song {song_id}: Streams = {streams}")
+        update_streams_for_measurement(latest_entry_id, streams)
+
+# --- Neue Funktion: Streams von Spotify abrufen ---
+def get_spotify_playcount(track_id, token):
+    variables = json.dumps({"uri": f"spotify:track:{track_id}"})
+    extensions = json.dumps({
+        "persistedQuery": {
+            "version": 1,
+            "sha256Hash": "26cd58ab86ebba80196c41c3d48a4324c619e9a9d7df26ecca22417e0c50c6a4"
+        }
+    })
+    params = {"operationName": "getTrack", "variables": variables, "extensions": extensions}
+    url = "https://api-partner.spotify.com/pathfinder/v1/query"
+    headers = {"Authorization": f"Bearer {token}"}
+    response = requests.get(url, headers=headers, params=params)
+    response.raise_for_status()
+    data = response.json()
+    return int(data["data"]["trackUnion"].get("playcount", 0))
+
+def update_streams_for_measurement(entry_id, streams):
+    url = f"{notion_page_endpoint}/{entry_id}"
+    payload = {"properties": {"Streams": {"number": streams}}}
+    response = requests.patch(url, headers=notion_headers, json=payload)
+    response.raise_for_status()
 
 # --- Sidebar: Refresh Button und Filterformular ---
 with st.sidebar:
