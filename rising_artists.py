@@ -31,7 +31,7 @@ SPOTIFY_CLIENT_ID = st.secrets["spotify"]["client_id"]
 SPOTIFY_CLIENT_SECRET = st.secrets["spotify"]["client_secret"]
 
 def get_spotify_token():
-    # Wir nutzen weiterhin den Web-Player-Endpunkt
+    # Wir nutzen den Web-Player-Endpunkt
     url = "https://open.spotify.com/get_access_token?reason=transport&productType=web_player"
     response = requests.get(url)
     response.raise_for_status()
@@ -84,7 +84,7 @@ def update_streams_for_measurement(entry_id, streams):
     response = requests.patch(url, headers=notion_headers, json=payload)
     response.raise_for_status()
 
-# Caching mit TTL von 300 Sekunden (5 Minuten) für dynamische Daten
+# Caching für dynamische Daten (TTL = 300 Sekunden)
 @st.cache_data(ttl=300, show_spinner=False)
 def get_all_tracking_pages():
     url = f"{notion_query_endpoint}/{tracking_db_id}/query"
@@ -119,6 +119,7 @@ def get_tracking_entries():
         pop = props.get("Popularity Score", {}).get("number")
         date_str = props.get("Date", {}).get("date", {}).get("start")
         growth = props.get("Growth", {}).get("number")
+        streams_val = props.get("Streams", {}).get("number")
         song_relations = props.get("Song", {}).get("relation", [])
         for relation in song_relations:
             song_id = relation.get("id")
@@ -127,7 +128,8 @@ def get_tracking_entries():
                 "song_id": song_id,
                 "date": date_str,
                 "popularity": pop,
-                "growth": growth
+                "growth": growth,
+                "Streams": streams_val
             })
     return entries
 
@@ -144,7 +146,7 @@ def get_spotify_data(spotify_track_id):
         return cover_url, spotify_link
     return "", ""
 
-# Metadaten (Artist, Songname etc.) werden dauerhaft gecached, da sie sich nicht ändern
+# Metadaten (Artist, Songname etc.) dauerhaft cachen (keine TTL)
 @st.cache_data(show_spinner=False)
 def get_metadata_from_tracking_db():
     pages = get_all_tracking_pages()
@@ -315,7 +317,6 @@ def update_popularity():
     status_text.empty()
     
     st.write("Berechne Growth für jeden Song...")
-    # Cache leeren, um frische Daten zu erhalten:
     get_all_tracking_pages.clear()
     get_tracking_entries.clear()
     updated_entries = get_tracking_entries()
@@ -484,6 +485,7 @@ for row_df in rows:
                     df_new = pd.DataFrame(updated_entries)
                     df_new["date"] = pd.to_datetime(df_new["date"], errors="coerce").dt.tz_localize(None)
                     song_history = df_new[df_new["song_id"] == row["song_id"]].sort_values("date")
+                    # Popularity-Graph
                     if len(song_history) == 1:
                         fig = px.scatter(song_history, x="date", y="popularity",
                                          title=f"{row['track_name']} - {row['artist']}",
@@ -496,10 +498,28 @@ for row_df in rows:
                     fig.update_yaxes(range=[0, 100])
                     st.plotly_chart(fig, use_container_width=True, key=f"chart_{row['song_id']}_{time.time()}")
                     
+                    # Neuer Graph: Stream-Wachstum
+                    show_streams_graph = st.checkbox("Stream Wachstum anzeigen", key=f"toggle_stream_{row['song_id']}")
+                    if show_streams_graph:
+                        with st.spinner("Stream-Grafik wird geladen..."):
+                            # Verwende die gleichen aktualisierten Tracking-Daten
+                            if "Streams" in song_history.columns and not song_history["Streams"].isnull().all():
+                                if len(song_history) == 1:
+                                    fig_stream = px.scatter(song_history, x="date", y="Streams",
+                                                            title=f"{row['track_name']} - Stream Wachstum",
+                                                            labels={"date": "Datum", "Streams": "Streams"})
+                                else:
+                                    fig_stream = px.line(song_history, x="date", y="Streams",
+                                                        title=f"{row['track_name']} - Stream Wachstum",
+                                                        labels={"date": "Datum", "Streams": "Streams"},
+                                                        markers=True)
+                                st.plotly_chart(fig_stream, use_container_width=True, key=f"chart_stream_{row['song_id']}_{time.time()}")
+                            else:
+                                st.write("Keine Stream-Daten verfügbar")
+                    
 st.header("Songs filtern")
 if submitted:
     last_data = []
-    # Gruppiere alle Songs
     song_groups = list(df_all.groupby("song_id"))
     filter_progress = st.progress(0)
     total_groups = len(song_groups)
