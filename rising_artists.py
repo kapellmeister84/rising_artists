@@ -25,31 +25,7 @@ notion_headers = {
     "Content-Type": "application/json",
     "Notion-Version": "2022-06-28"
 }
-if "df_all" not in locals() or df_all.empty:
-    df_all = df[df["date"].notnull()]
 
-st.header("Songs filtern")
-if st.button("Filter anwenden"):
-    last_data = []
-    song_groups = list(df_all.groupby("song_id"))
-    filter_progress = st.progress(0)
-    total_groups = len(song_groups)
-    for idx, (song_id, group) in enumerate(song_groups):
-        group = group.sort_values("date")
-        last_pop = group.iloc[-1]["popularity"]
-        growth_val = 0
-        if len(group) >= 2:
-            prev_pop = group.iloc[-2]["popularity"]
-            growth_val = ((last_pop - prev_pop) / prev_pop) * 100 if prev_pop and prev_pop != 0 else 0
-        last_data.append({
-            "song_id": song_id,
-            "last_popularity": last_pop,
-            "growth": growth_val
-        })
-        filter_progress.progress((idx + 1) / total_groups)
-    last_df = pd.DataFrame(last_data)
-    st.write("Gefilterte Songs:")
-    st.dataframe(last_df)
 # === Spotify-Konfiguration ===
 SPOTIFY_CLIENT_ID = st.secrets["spotify"]["client_id"]
 SPOTIFY_CLIENT_SECRET = st.secrets["spotify"]["client_secret"]
