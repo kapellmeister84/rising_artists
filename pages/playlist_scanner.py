@@ -5,12 +5,11 @@ playlist scanner
 import streamlit as st
 import requests, json, time, hashlib
 from datetime import datetime
+from utils import set_background, set_dark_mode
 
-
-st.set_page_config(page_title="playlist scanner", layout="wide", initial_sidebar_state="expanded")
-
-from utils import load_css
-load_css()
+st.set_page_config(layout="wide")
+set_dark_mode()
+set_background("https://wallpapershome.com/images/pages/pic_h/26334.jpg")
 
 
 
