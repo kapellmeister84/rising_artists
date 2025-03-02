@@ -4,8 +4,12 @@ import datetime
 import json
 from concurrent.futures import ThreadPoolExecutor
 
-# Set page config (optional)
+from utils import set_background, set_dark_mode
+
+# Set page config und Hintergrund
 st.set_page_config(layout="wide")
+set_dark_mode()
+set_background("https://wallpapershome.com/images/pages/pic_h/26334.jpg")
 
 #########################
 # Notion-Konfiguration  #
@@ -14,7 +18,7 @@ st.set_page_config(layout="wide")
 songs_database_id = st.secrets["notion"]["song-database"]
 notion_secret = st.secrets["notion"]["secret"]
 
-# Endpunkt und Header für Notion
+# Endpunkte und Header für Notion
 notion_query_endpoint = "https://api.notion.com/v1/databases"
 notion_page_endpoint = "https://api.notion.com/v1/pages"
 notion_headers = {
@@ -24,13 +28,13 @@ notion_headers = {
 }
 
 #########################
-# Caching von Notion-Daten
+# Caching Notion-Daten: Songs-Metadaten inkl. Measurements (wenn vorhanden)
 #########################
 @st.cache_data(show_spinner=False)
 def get_measurement_details(measurement_id):
     """
-    Ruft für eine gegebene Measurement-Seite (ID) die Details ab.
-    Erwartete Properties in der Measurements-Datenbank:
+    Ruft für eine Measurement-Seite die Details ab.
+    Erwartete Properties:
       - Song Pop (number)
       - Artist Pop (number)
       - Streams (number)
@@ -60,7 +64,7 @@ def get_songs_metadata():
       - Track ID (rich_text)
       - Release Date (date)
       - Country Code (rich_text)
-      - Measurements (relation) – Für jeden verknüpften Eintrag werden die Measurement-Details abgefragt.
+      - Measurements (relation) – Für jeden verknüpften Eintrag werden die Measurement-Details parallel abgefragt.
     """
     url = f"{notion_query_endpoint}/{songs_database_id}/query"
     payload = {"page_size": 100}
@@ -146,17 +150,95 @@ def get_songs_metadata():
                     song_data["measurements"].append({"id": measurement_id, **details})
     return metadata
 
+# Laden der Songs-Metadaten inkl. Measurements
+songs_metadata = get_songs_metadata()
+
 #########################
-# UI – Button "Get New Music"
+# Button "Get New Music"
 #########################
 st.sidebar.title("Songs Cache")
 if st.sidebar.button("Get New Music"):
-    # Lösche den Cache und lade die Daten neu
     get_songs_metadata.clear()
     st.experimental_rerun()
 
-# Lade die Songs-Metadaten inklusive Measurements aus der Notion-Songs-Datenbank
-songs_metadata = get_songs_metadata()
+#########################
+# Neuer Button: "Get Data"
+#########################
+def update_song_data(song, token):
+    """
+    Ruft über die Spotify-API die aktuellen Details zu einem Song ab und gibt ein Dictionary zurück.
+    Erwartete Felder:
+      - song_pop: Track-Popularity
+      - artist_pop: Artist-Popularity
+      - country_code: Aktualisierter Country Code (aus Album)
+      - artist_followers: Follower des Künstlers
+    """
+    url = f"https://api.spotify.com/v1/tracks/{song['track_id']}"
+    headers = {"Authorization": f"Bearer {token}"}
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        data = response.json()
+        available_markets = data.get("album", {}).get("available_markets", [])
+        country_code = available_markets[0] if available_markets else ""
+        song_pop = data.get("popularity", 0)
+        artists = data.get("artists", [])
+        artist_id = artists[0].get("id") if artists and artists[0].get("id") else ""
+        artist_pop = 0
+        artist_followers = 0
+        if artist_id:
+            artist_url = f"https://api.spotify.com/v1/artists/{artist_id}"
+            artist_resp = requests.get(artist_url, headers={"Authorization": f"Bearer {token}"})
+            if artist_resp.status_code == 200:
+                artist_data = artist_resp.json()
+                artist_pop = artist_data.get("popularity", 0)
+                artist_followers = artist_data.get("followers", {}).get("total", 0)
+        return {
+            "song_pop": song_pop,
+            "artist_pop": artist_pop,
+            "country_code": country_code,
+            "artist_followers": artist_followers
+        }
+    else:
+        st.error(f"Error fetching data for track {song['track_id']}: {response.text}")
+        return {}
+
+def update_song_details():
+    """
+    Iteriert über alle Songs im Cache und aktualisiert die Song-Details in der Notion-Songs-Datenbank
+    (Song Pop, Artist Pop, Country Code und Artist Followers) über einen PATCH-Request.
+    """
+    spotify_token = get_spotify_token()
+    messages = []
+    for key, song in songs_metadata.items():
+        if song.get("track_id"):
+            details = update_song_data(song, spotify_token)
+            page_id = song.get("page_id")
+            if not page_id:
+                continue
+            payload = {
+                "properties": {
+                    "Song Pop": {"number": details.get("song_pop", 0)},
+                    "Artist Pop": {"number": details.get("artist_pop", 0)},
+                    "Artist Followers": {"number": details.get("artist_followers", 0)},
+                    "Country Code": {"rich_text": [{"text": {"content": details.get("country_code", "")}}]}
+                }
+            }
+            url = f"{notion_page_endpoint}/{page_id}"
+            response = requests.patch(url, headers=notion_headers, json=payload)
+            if response.status_code == 200:
+                messages.append(f"Updated details for {song.get('track_name')}")
+            else:
+                messages.append(f"Error updating details for {song.get('track_name')}: {response.text}")
+    return messages
+
+if st.sidebar.button("Get Data"):
+    msgs = update_song_details()
+    for m in msgs:
+        st.write(m)
+
+#########################
+# Anzeige der geladenen Metadaten
+#########################
 st.title("Songs Metadata from Notion (with Measurements)")
 st.write("Loaded songs metadata:")
 st.write(songs_metadata)
