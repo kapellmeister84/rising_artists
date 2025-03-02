@@ -191,12 +191,12 @@ if submit and search_term:
         total_playlists = len(all_playlists)
         
         # Declare global before assignment
-    global SPOTIFY_TOKEN, SPOTIFY_HEADERS
+        global SPOTIFY_TOKEN, SPOTIFY_HEADERS
         spotify_token = get_spotify_token()
         SPOTIFY_TOKEN = spotify_token
         SPOTIFY_HEADERS = {"Authorization": f"Bearer {spotify_token}"}
         
-    for i, (pid, platform) in enumerate(all_playlists, start=1):
+        for i, (pid, platform) in enumerate(all_playlists, start=1):
             if platform == "spotify":
                 playlist = get_playlist_data(pid, spotify_token)
                 if not playlist:
