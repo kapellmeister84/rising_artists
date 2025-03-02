@@ -499,14 +499,23 @@ for row_df in rows:
 st.header("Songs filtern")
 if submitted:
     last_data = []
-    for song_id, group in df_all.groupby("song_id"):
+    # Gruppiere alle Songs
+    song_groups = list(df_all.groupby("song_id"))
+    filter_progress = st.progress(0)
+    total_groups = len(song_groups)
+    for idx, (song_id, group) in enumerate(song_groups):
         group = group.sort_values("date")
         last_pop = group.iloc[-1]["popularity"]
         growth_val = 0
         if len(group) >= 2:
             prev_pop = group.iloc[-2]["popularity"]
             growth_val = ((last_pop - prev_pop) / prev_pop) * 100 if prev_pop and prev_pop != 0 else 0
-        meta = metadata.get(song_id, {"track_name": "Unbekannter Track", "artist": "Unbekannt", "release_date": "", "spotify_track_id": ""})
+        meta = metadata.get(song_id, {
+            "track_name": "Unbekannter Track",
+            "artist": "Unbekannt",
+            "release_date": "",
+            "spotify_track_id": ""
+        })
         last_data.append({
             "song_id": song_id,
             "track_name": meta.get("track_name", "Unbekannter Track"),
@@ -516,6 +525,7 @@ if submitted:
             "last_popularity": last_pop,
             "growth": growth_val
         })
+        filter_progress.progress((idx + 1) / total_groups)
     last_df = pd.DataFrame(last_data)
     
     filtered_df = last_df[
