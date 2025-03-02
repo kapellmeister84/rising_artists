@@ -131,10 +131,10 @@ def generate_track_key(track):
 # --- Main area: Scanner UI ---
 
 st.markdown('<div id="search_form">', unsafe_allow_html=True)
-    with st.form("scanner_form"):
-        search_term = st.text_input("enter artist or song:", value="").strip()
-        submit = st.form_submit_button("🔍 scan playlists")
-    st.markdown('</div>', unsafe_allow_html=True)
+with st.form("scanner_form"):
+    search_term = st.text_input("enter artist or song:", value="").strip()
+    submit = st.form_submit_button("🔍 scan playlists")
+st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown(
         """
