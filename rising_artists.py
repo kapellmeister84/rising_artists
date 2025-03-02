@@ -14,8 +14,9 @@ set_dark_mode()
 set_background("https://wallpapershome.com/images/pages/pic_h/26334.jpg")
 
 # === Notion-Konfiguration ===
-tracking_db_id = st.secrets["notion"]["tracking_db_id"]   # Weeks-/Tracking-Datenbank
-songs_database_id = st.secrets["notion"]["songs_db_id"]       # Songs-Datenbank
+# Persönliche Zugangsdaten aus st.secrets
+tracking_db_id = st.secrets["notion"]["tracking_db_id"]      # Weeks-/Tracking-Datenbank
+songs_database_id = st.secrets["notion"]["songs_db_id"]          # Songs-Datenbank
 notion_secret = st.secrets["notion"]["token"]
 notion_query_endpoint = "https://api.notion.com/v1/databases"
 notion_page_endpoint = "https://api.notion.com/v1/pages"
@@ -29,8 +30,9 @@ notion_headers = {
 SPOTIFY_CLIENT_ID = st.secrets["spotify"]["client_id"]
 SPOTIFY_CLIENT_SECRET = st.secrets["spotify"]["client_secret"]
 
-# Hier kannst du den Token über einen API-Aufruf abrufen – alternativ den Client-Credentials-Flow implementieren:
 def get_spotify_token():
+    # Hier kannst du alternativ den Client-Credentials-Flow einbauen,
+    # wir nutzen hier weiterhin den Web-Player-Endpunkt:
     url = "https://open.spotify.com/get_access_token?reason=transport&productType=web_player"
     response = requests.get(url)
     response.raise_for_status()
@@ -83,7 +85,7 @@ def update_streams_for_measurement(entry_id, streams):
     response = requests.patch(url, headers=notion_headers, json=payload)
     response.raise_for_status()
 
-@st.cache_data(show_spinner=False)
+# Keine Caching-Dekoratoren mehr – so werden die Daten stets frisch abgefragt.
 def get_all_tracking_pages():
     url = f"{notion_query_endpoint}/{tracking_db_id}/query"
     payload = {"page_size": 100}
@@ -101,7 +103,6 @@ def get_all_tracking_pages():
         start_cursor = data.get("next_cursor")
     return pages
 
-@st.cache_data(show_spinner=False)
 def get_tracking_entries():
     pages = get_all_tracking_pages()
     entries = []
@@ -123,7 +124,6 @@ def get_tracking_entries():
             })
     return entries
 
-@st.cache_data(show_spinner=False)
 def get_spotify_data(spotify_track_id):
     url = f"https://api.spotify.com/v1/tracks/{spotify_track_id}"
     response = requests.get(url, headers={"Authorization": f"Bearer {SPOTIFY_TOKEN}"})
@@ -136,7 +136,6 @@ def get_spotify_data(spotify_track_id):
         return cover_url, spotify_link
     return "", ""
 
-@st.cache_data(show_spinner=False)
 def get_metadata_from_tracking_db():
     pages = get_all_tracking_pages()
     metadata = {}
@@ -173,7 +172,7 @@ def get_metadata_from_tracking_db():
         }
     return metadata
 
-# --- Neue Funktion: Spotify-Playcount (Streams) abrufen ---
+# --- Spotify-Playcount (Streams) abrufen (ohne Cache) ---
 def get_spotify_playcount(track_id, token):
     variables = json.dumps({"uri": f"spotify:track:{track_id}"})
     extensions = json.dumps({
@@ -233,7 +232,7 @@ def update_popularity():
     progress_bar = st.progress(0)
     status_text = st.empty()
     
-    week_database_id = "1a9b6204cede80e29338ede2c76999f2"
+    week_database_id = tracking_db_id  # Hier wird die Tracking-Datenbank verwendet
     
     def get_song_name(page_id):
         url = f"{notion_page_endpoint}/{page_id}"
@@ -305,15 +304,18 @@ def update_popularity():
     st.success("Popularity wurde aktualisiert!")
     status_text.empty()
     
+    # Growth-Berechnung mit Fortschrittsbalken
     st.write("Berechne Growth für jeden Song...")
-    # Cache leeren
     get_all_tracking_pages.clear()
     get_tracking_entries.clear()
     updated_entries = get_tracking_entries()
     df_update = pd.DataFrame(updated_entries)
     df_update["date"] = pd.to_datetime(df_update["date"], errors="coerce")
     df_update = df_update.dropna(subset=["date", "song_id"])
-    for song_id, group in df_update.groupby("song_id"):
+    growth_groups = list(df_update.groupby("song_id"))
+    growth_progress = st.progress(0)
+    total_groups = len(growth_groups)
+    for idx, (song_id, group) in enumerate(growth_groups):
         group = group.sort_values("date")
         if len(group) >= 2:
             prev = group.iloc[-2]["popularity"]
@@ -324,11 +326,11 @@ def update_popularity():
             growth = 0
             comparison = "(keine Vergleichsdaten)"
         latest_entry_id = group.iloc[-1]["entry_id"]
-        st.write(f"Song {song_id}: Growth = {growth:.1f}% {comparison}")
+        # Hier erfolgt keine st.write-Ausgabe, sondern nur der Fortschrittsbalken:
+        growth_progress.progress((idx + 1) / total_groups)
         update_growth_for_measurement(latest_entry_id, growth)
     
     st.write("Aktualisiere Streams für jeden Song...")
-    # Fortschrittsbalken für Streams
     get_all_tracking_pages.clear()
     get_tracking_entries.clear()
     updated_entries = get_tracking_entries()
@@ -337,8 +339,8 @@ def update_popularity():
     df_update = df_update.dropna(subset=["date", "song_id"])
     metadata = get_metadata_from_tracking_db()
     stream_groups = list(df_update.groupby("song_id"))
-    progress_stream = st.progress(0)
-    total_groups = len(stream_groups)
+    stream_progress = st.progress(0)
+    total_streams = len(stream_groups)
     for idx, (song_id, group) in enumerate(stream_groups):
         group = group.sort_values("date")
         latest_entry_id = group.iloc[-1]["entry_id"]
@@ -348,15 +350,13 @@ def update_popularity():
         if spotify_track_id:
             try:
                 streams = get_spotify_playcount(spotify_track_id, SPOTIFY_TOKEN)
-                # Falls 0, nochmals versuchen:
                 if streams == 0:
                     time.sleep(1)
                     streams = get_spotify_playcount(spotify_track_id, SPOTIFY_TOKEN)
             except Exception as e:
                 streams = 0
-        else:
-            streams = 0
-        progress_stream.progress((idx + 1) / total_groups)
+        progress_stream = (idx + 1) / total_streams
+        stream_progress.progress(progress_stream)
         update_streams_for_measurement(latest_entry_id, streams)
 
 def get_spotify_playcount(track_id, token):
