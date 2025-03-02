@@ -66,31 +66,24 @@ def get_songs_metadata():
         measurement_futures = {}
         for page in pages:
             props = page.get("properties", {})
-            # Track Name
             track_name = ""
             if "Track Name" in props and props["Track Name"].get("title"):
                 track_name = "".join([t.get("plain_text", "") for t in props["Track Name"]["title"]]).strip()
-            # Artist Name
             artist_name = ""
             if "Artist Name" in props and props["Artist Name"].get("rich_text"):
                 artist_name = "".join([t.get("plain_text", "") for t in props["Artist Name"]["rich_text"]]).strip()
-            # Artist ID
             artist_id = ""
             if "Artist ID" in props and props["Artist ID"].get("rich_text"):
                 artist_id = "".join([t.get("plain_text", "") for t in props["Artist ID"]["rich_text"]]).strip()
-            # Track ID
             track_id = ""
             if "Track ID" in props and props["Track ID"].get("rich_text"):
                 track_id = "".join([t.get("plain_text", "") for t in props["Track ID"]["rich_text"]]).strip()
-            # Release Date
             release_date = ""
             if "Release Date" in props and props["Release Date"].get("date"):
                 release_date = props["Release Date"]["date"].get("start", "")
-            # Country Code
             country_code = ""
             if "Country Code" in props and props["Country Code"].get("rich_text"):
                 country_code = "".join([t.get("plain_text", "") for t in props["Country Code"]["rich_text"]]).strip()
-            # Measurements Relation
             measurements_ids = []
             if "Measurements" in props and props["Measurements"].get("relation"):
                 for rel in props["Measurements"]["relation"]:
@@ -122,9 +115,6 @@ def get_songs_metadata():
     return metadata
 
 songs_metadata = get_songs_metadata()
-st.title("Songs Metadata from Notion (with Measurements)")
-st.write("Loaded songs metadata:")
-st.write(songs_metadata)
 
 ######################################
 # Sidebar: Log-Fenster und Fortschrittsbalken
@@ -187,7 +177,6 @@ def get_spotify_popularity(track_id, token):
         log(f"Error fetching popularity for track {track_id}: {e}")
         return 0
 
-# Hier die Funktion get_monthly_listeners_from_html hinzufügen
 def get_monthly_listeners_from_html(artist_id):
     url = f"https://open.spotify.com/artist/{artist_id}"
     headers = {"User-Agent": "Mozilla/5.0", "Accept-Language": "de"}
@@ -221,6 +210,7 @@ def update_song_data(song, token):
         artist_id = artists[0].get("id") if artists and artists[0].get("id") else ""
         artist_pop = 0
         artist_followers = 0
+        artist_image = ""
         if artist_id:
             artist_url = f"https://api.spotify.com/v1/artists/{artist_id}"
             artist_resp = requests.get(artist_url, headers={"Authorization": f"Bearer {token}"})
@@ -228,6 +218,8 @@ def update_song_data(song, token):
                 artist_data = artist_resp.json()
                 artist_pop = artist_data.get("popularity", 0)
                 artist_followers = artist_data.get("followers", {}).get("total", 0)
+                if artist_data.get("images") and len(artist_data["images"]) > 0:
+                    artist_image = artist_data["images"][0]["url"]
         streams = get_spotify_playcount(song["track_id"], token)
         monthly_listeners = get_monthly_listeners_from_html(artist_id)
         if monthly_listeners is None:
@@ -238,7 +230,8 @@ def update_song_data(song, token):
             "country_code": country_code,
             "artist_followers": artist_followers,
             "streams": streams,
-            "monthly_listeners": monthly_listeners
+            "monthly_listeners": monthly_listeners,
+            "artist_image": artist_image
         }
     else:
         st.error(f"Error fetching data for track {song['track_id']}: {response.text}")
@@ -323,88 +316,93 @@ def song_exists_in_notion(track_id):
         return False
 
 ######################################
-# Suchfunktion: Suche in Songs-Datenbank
+# Neue Funktion: Gruppierung der Suchergebnisse nach Artist
 ######################################
-def search_songs(query):
-    query_lower = query.lower()
-    results = {}
-    for key, song in songs_metadata.items():
-        if query_lower in song.get("track_name", "").lower() or query_lower in song.get("artist_name", "").lower():
-            # Aktualisiere für das Suchergebnis die aktuellen Spotify-Daten und lege neuen Measurement-Eintrag an
-            details = update_song_data(song, SPOTIFY_TOKEN)
-            new_meas_id = create_measurement_entry(song, details)
-            update_song_measurements_relation(song["page_id"], new_meas_id)
-            song["latest_measurement"] = details
-            results[key] = song
-    return results
+def group_results_by_artist(results):
+    grouped = {}
+    for key, song in results.items():
+        # Gruppiere nach artist_id, wenn vorhanden, ansonsten nach artist_name
+        group_key = song.get("artist_id") or song.get("artist_name")
+        if group_key not in grouped:
+            grouped[group_key] = []
+        grouped[group_key].append(song)
+    return grouped
 
 ######################################
-# Optisch ansprechende Darstellung: Karteikarten
+# Neue Funktion: Suchergebnisse anzeigen als Karteikarten
 ######################################
 def display_search_results(results):
     st.title("Search Results")
-    for key, song in results.items():
-        cover_url = ""
-        track_url = ""
-        try:
-            url = f"https://api.spotify.com/v1/tracks/{song['track_id']}"
-            headers = {"Authorization": f"Bearer {SPOTIFY_TOKEN}"}
-            resp = requests.get(url, headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
-            if data.get("album") and data["album"].get("images"):
-                cover_url = data["album"]["images"][0].get("url", "")
-            track_url = data.get("external_urls", {}).get("spotify", "")
-        except Exception as e:
-            log(f"Fehler beim Abrufen des Covers für {song.get('track_name')}: {e}")
-        card_html = f"""
+    grouped = group_results_by_artist(results)
+    for group_key, songs in grouped.items():
+        # Nutze das erste Lied als Repräsentant für den Künstler
+        representative = songs[0]
+        artist_name = representative.get("artist_name")
+        artist_image = representative.get("latest_measurement", {}).get("artist_image", "")
+        # Baue die Artist-Karte
+        artist_card = f"""
         <div style="
-            border: 1px solid #ccc;
+            border: 2px solid #1DB954;
             border-radius: 8px;
             padding: 16px;
-            margin: 8px;
-            width: 300px;
+            margin: 16px 0;
             box-shadow: 2px 2px 6px rgba(0,0,0,0.1);
+            background-color: #f9f9f9;
             ">
-            <div style="text-align: center;">
-                <img src="{cover_url}" alt="Cover" style="width: 100%; border-radius: 4px;">
-            </div>
-            <h3 style="margin: 8px 0 4px 0;">{song.get("track_name")}</h3>
-            <p style="margin: 4px 0;"><strong>Artist:</strong> {song.get("artist_name")}</p>
-            <p style="margin: 4px 0;"><strong>Release Date:</strong> {song.get("release_date")}</p>
-            <hr style="border: none; border-top: 1px solid #eee;">
-            <p style="margin: 4px 0;"><strong>Song Pop:</strong> {song.get("latest_measurement", {}).get("song_pop", 0)}</p>
-            <p style="margin: 4px 0;"><strong>Artist Pop:</strong> {song.get("latest_measurement", {}).get("artist_pop", 0)}</p>
-            <p style="margin: 4px 0;"><strong>Streams:</strong> {song.get("latest_measurement", {}).get("streams", 0)}</p>
-            <p style="margin: 4px 0;"><strong>Monthly Listeners:</strong> {song.get("latest_measurement", {}).get("monthly_listeners", 0)}</p>
-            <p style="margin: 4px 0;"><strong>Artist Followers:</strong> {song.get("latest_measurement", {}).get("artist_followers", 0)}</p>
-            <div style="text-align: center; margin-top: 8px;">
-                <a href="{track_url}" target="_blank" style="
-                    text-decoration: none;
-                    color: #1DB954;
-                    font-weight: bold;">Listen on Spotify</a>
+            <div style="display: flex; align-items: center;">
+                <img src="{artist_image}" alt="Artist" style="width: 80px; height: 80px; border-radius: 50%; margin-right: 16px;">
+                <h2 style="margin: 0;">{artist_name}</h2>
             </div>
         </div>
         """
-        st.markdown(card_html, unsafe_allow_html=True)
-
-######################################
-# Sidebar: Suchfeld, Log-Fenster, Fortschrittsbalken
-######################################
-st.sidebar.title("Search")
-search_query = st.sidebar.text_input("Search by artist or song:")
-
-if "log_messages" not in st.session_state:
-    st.session_state.log_messages = []
-
-def log(msg):
-    st.session_state.log_messages.append(f"{datetime.datetime.now().strftime('%H:%M:%S')}: {msg}")
-    st.sidebar.text_area("Log", "\n".join(st.session_state.log_messages), height=200)
-
-def show_progress(progress, info):
-    pb = st.sidebar.progress(progress)
-    st.sidebar.write(info)
-    return pb
+        st.markdown(artist_card, unsafe_allow_html=True)
+        # Liste die Songs des Künstlers als Karten auf
+        st.markdown("<div style='display: flex; flex-wrap: wrap;'>", unsafe_allow_html=True)
+        for song in songs:
+            # Hole Cover und Spotify-Link
+            cover_url = ""
+            track_url = ""
+            try:
+                url = f"https://api.spotify.com/v1/tracks/{song['track_id']}"
+                headers = {"Authorization": f"Bearer {SPOTIFY_TOKEN}"}
+                resp = requests.get(url, headers=headers)
+                resp.raise_for_status()
+                data = resp.json()
+                if data.get("album") and data["album"].get("images"):
+                    cover_url = data["album"]["images"][0].get("url", "")
+                track_url = data.get("external_urls", {}).get("spotify", "")
+            except Exception as e:
+                log(f"Fehler beim Abrufen des Covers für {song.get('track_name')}: {e}")
+            card_html = f"""
+            <div style="
+                border: 1px solid #ccc;
+                border-radius: 8px;
+                padding: 16px;
+                margin: 8px;
+                width: 300px;
+                box-shadow: 2px 2px 6px rgba(0,0,0,0.1);
+                background-color: #ffffff;
+                ">
+                <div style="text-align: center;">
+                    <img src="{cover_url}" alt="Cover" style="width: 100%; border-radius: 4px;">
+                </div>
+                <h3 style="margin: 8px 0 4px 0;">{song.get("track_name")}</h3>
+                <p style="margin: 4px 0;"><strong>Release Date:</strong> {song.get("release_date")}</p>
+                <hr style="border: none; border-top: 1px solid #eee;">
+                <p style="margin: 4px 0;"><strong>Song Pop:</strong> {song.get("latest_measurement", {}).get("song_pop", 0)}</p>
+                <p style="margin: 4px 0;"><strong>Streams:</strong> {song.get("latest_measurement", {}).get("streams", 0)}</p>
+                <p style="margin: 4px 0;"><strong>Monthly Listeners:</strong> {song.get("latest_measurement", {}).get("monthly_listeners", 0)}</p>
+                <p style="margin: 4px 0;"><strong>Artist Followers:</strong> {song.get("latest_measurement", {}).get("artist_followers", 0)}</p>
+                <div style="text-align: center; margin-top: 8px;">
+                    <a href="{track_url}" target="_blank" style="
+                        text-decoration: none;
+                        color: #1DB954;
+                        font-weight: bold;">Listen on Spotify</a>
+                </div>
+            </div>
+            """
+            st.markdown(card_html, unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
 ######################################
 # Sidebar Buttons
@@ -455,7 +453,7 @@ def song_exists_in_notion(track_id):
         return False
 
 ######################################
-# Hauptbereich: Suchergebnisse anzeigen
+# Hauptbereich: Suchergebnisse anzeigen (nur Ergebnisse)
 ######################################
 def search_songs(query):
     query_lower = query.lower()
