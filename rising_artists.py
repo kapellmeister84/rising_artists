@@ -288,16 +288,17 @@ def update_popularity():
     df_update = pd.DataFrame(updated_entries)
     df_update["date"] = pd.to_datetime(df_update["date"], errors="coerce")
     df_update = df_update.dropna(subset=["date", "song_id"])
-    # Für jeden Song: Nutze den Growth-Wert der neuesten Messung aus der DB
     for song_id, group in df_update.groupby("song_id"):
         group = group.sort_values("date")
-        # Hier nehmen wir den Growth-Wert des letzten Eintrags – falls vorhanden
-        latest_growth = group.iloc[-1].get("growth")
-        # Nur wenn latest_growth vorhanden und > 0, sonst 0
-        final_growth = latest_growth if latest_growth and latest_growth > 0 else 0
+        if len(group) >= 2:
+            prev = group.iloc[-2]["popularity"]
+            curr = group.iloc[-1]["popularity"]
+            growth = ((curr - prev) / prev) * 100 if prev and prev != 0 else 0
+        else:
+            growth = 0
         latest_entry_id = group.iloc[-1]["entry_id"]
-        st.write(f"Song {song_id}: Growth = {final_growth:.1f}%")
-        update_growth_for_measurement(latest_entry_id, final_growth)
+        st.write(f"Song {song_id}: Growth = {growth:.1f}% (Vergleich: {prev} -> {curr})")
+        update_growth_for_measurement(latest_entry_id, growth)
 
 # --- Sidebar: Buttons und Filterformular ---
 with st.sidebar:
@@ -310,7 +311,6 @@ with st.sidebar:
     with st.form("filter_form"):
         search_query = st.text_input("Song/Artist Suche", "")
         filter_pop_range = st.slider("Popularity Range (letzter Messwert)", 0, 100, (0, 100), step=1, key="filter_pop")
-        # Nur Tracks mit Growth > 0 werden berücksichtigt
         filter_growth_threshold = st.number_input("Min. Growth % (zwischen den letzten beiden Messungen)", min_value=0.0, value=0.0, step=0.5, key="filter_growth")
         filter_sort_option = st.selectbox("Sortiere nach", ["Popularity", "Release Date"], key="filter_sort")
         filter_timeframe_option = st.selectbox("Zeitraum für Graphen (Ende)", ["3 Tage", "1 Woche", "2 Wochen", "3 Wochen"], key="filter_timeframe")
@@ -343,7 +343,7 @@ for song_id, group in df_all.groupby("song_id"):
     if group.empty:
         continue
     last_pop = group.iloc[-1]["popularity"]
-    # Verwende den Growth-Wert des letzten Eintrags (aus der DB) – falls vorhanden, sonst berechne kumulativ
+    # Verwende den Growth-Wert des letzten Eintrags (aus der DB), falls vorhanden, sonst kumulativ berechnen
     last_growth = group.iloc[-1].get("growth")
     if last_growth is None:
         first_pop = group.iloc[0]["popularity"]
@@ -366,7 +366,7 @@ if cum_df.empty:
     st.write("Keine Daten für die Top 10 verfügbar.")
     top10 = pd.DataFrame()
 else:
-    # Nur Songs mit Growth > 0 berücksichtigen und die 10 mit den größten Growth-Werten auswählen
+    # Nur Songs mit Growth > 0 und die 10 mit den größten Growth-Werten auswählen
     top10 = cum_df[cum_df["cumulative_growth"] > 0].sort_values("cumulative_growth", ascending=False).head(10)
 
 num_columns = 5
@@ -389,10 +389,17 @@ for row_df in rows:
             st.markdown(f"<div style='text-align: center;'>Popularity: {row['last_popularity']:.1f}</div>", unsafe_allow_html=True)
             st.markdown(f"<div style='text-align: center; font-weight: bold;'>Growth: {row['cumulative_growth']:.1f}%</div>", unsafe_allow_html=True)
             
+            # Toggle-Checkbox zum Anzeigen/Ausblenden des Graphen: Beim Aufklappen werden die Tracking-Daten frisch geladen.
             show_graph = st.checkbox("Graph anzeigen / ausblenden", key=f"toggle_{row['song_id']}")
             if show_graph:
                 with st.spinner("Graph wird geladen..."):
-                    song_history = df_all[df_all["song_id"] == row["song_id"]].sort_values("date")
+                    # Cache leeren und neu laden, um aktuelle Daten zu erhalten
+                    get_all_tracking_pages.clear()
+                    get_tracking_entries.clear()
+                    updated_entries = get_tracking_entries()
+                    df_new = pd.DataFrame(updated_entries)
+                    df_new["date"] = pd.to_datetime(df_new["date"], errors="coerce").dt.tz_localize(None)
+                    song_history = df_new[df_new["song_id"] == row["song_id"]].sort_values("date")
                     if len(song_history) == 1:
                         fig = px.scatter(song_history, x="date", y="popularity",
                                          title=f"{row['track_name']} - {row['artist']}",
@@ -420,7 +427,7 @@ if submitted:
         last_data.append({
             "song_id": song_id,
             "track_name": meta.get("track_name", "Unbekannter Track"),
-            "artist": meta.get("artist", "Unbekannter"),
+            "artist": meta.get("artist", "Unbekannt"),
             "release_date": meta.get("release_date", ""),
             "spotify_track_id": meta.get("spotify_track_id", ""),
             "last_popularity": last_pop,
