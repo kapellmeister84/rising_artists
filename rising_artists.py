@@ -317,7 +317,7 @@ def create_week_entry(song_page_id, popularity_score, track_id):
     requests.post(notion_page_endpoint, headers=notion_headers, json=payload)
 
 def update_popularity():
-    st.write("Aktualisiere Popularity, Streams und Hype Score …")
+    st.write("Aktualisiere Popularity, Streams, Hype Score und Artist Info …")
     progress_bar = st.progress(0)
     status_text = st.empty()
     
@@ -325,7 +325,7 @@ def update_popularity():
     song_pages = get_all_song_page_ids()
     total = len(song_pages)
     
-    # Für jeden Song den aktuellen Popularity-Wert von Spotify abrufen und in Notion als neuen Wochen-Eintrag anlegen
+    # Neuen Wochen-Eintrag für jeden Song anlegen (mit aktueller Popularity)
     for idx, song in enumerate(song_pages):
         page_id = song["page_id"]
         status_text.text(f"Verarbeite Song: {page_id}")
@@ -340,9 +340,9 @@ def update_popularity():
         create_week_entry(page_id, spotify_pop, track_id)
         progress_bar.progress(int((idx + 1) / total * 100))
     
-    status_text.text("Popularity aktualisiert. Jetzt Streams und Hype Score …")
+    status_text.text("Popularity aktualisiert. Jetzt Streams, Hype Score und Artist Info …")
     
-    # Für jeden Song Streams und Hype Score (plus Artist Info) aktualisieren
+    # Für jeden Song Streams, Hype Score und Artist Info updaten
     metadata = get_metadata_from_tracking_db()
     song_ids = list(metadata.keys())
     total_songs = len(song_ids)
@@ -366,7 +366,7 @@ def update_popularity():
             except Exception as e:
                 streams = 0
         update_streams_for_measurement(latest_entry_id, streams)
-        # Hype Score und Artist-Daten live abrufen
+        # Hype Score & Artist Info (live)
         artist_name = song_meta.get("artist", "")
         if artist_name:
             hype_score, artist_data = update_artist_on_demand(artist_name)
@@ -379,7 +379,7 @@ def update_popularity():
     st.session_state.tracking_entries = get_tracking_entries()
     status_text.text("Alle Daten aktualisiert!")
 
-# Neue Funktionen für den Hype Score (Artist-basiert)
+# Funktionen für den Hype Score (Artist-basiert)
 def get_artist_data(artist_name, token):
     search_url = "https://api.spotify.com/v1/search"
     headers = {"Authorization": f"Bearer {token}"}
@@ -433,7 +433,7 @@ with st.sidebar:
         filter_pop_range = st.slider("Popularity Range (letzter Messwert)", 0, 100, (0, 100), step=1, key="filter_pop")
         submitted = st.form_submit_button("Filter anwenden")
 
-# Daten laden
+# Tracking-Daten laden
 if "tracking_entries" in st.session_state:
     tracking_entries = st.session_state.tracking_entries
 else:
@@ -453,7 +453,7 @@ else:
     df["spotify_track_id"] = df["song_id"].map(lambda x: metadata.get(x, {}).get("spotify_track_id", ""))
     df_all = df[df["date"].notnull()]
 
-# Top 10 Songs mit Graphen für Popularity, Streams und Hype Score
+# Top 10 Songs ermitteln
 cumulative = []
 for song_id, group in df_all.groupby("song_id"):
     group = group.sort_values("date")
