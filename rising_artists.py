@@ -83,7 +83,7 @@ def update_streams_for_measurement(entry_id, streams):
 def get_all_tracking_pages():
     url = f"{notion_query_endpoint}/{tracking_db_id}/query"
     payload = {
-        "page_size": 100
+        "page_size": 100  # Maximale Anzahl pro Anfrage
     }
     pages = []
     has_more = True
@@ -171,7 +171,7 @@ def get_metadata_from_tracking_db():
         }
     return metadata
 
-# --- Funktion zum Abrufen des Spotify-Playcounts (Streams) ---
+# --- Neue Funktion: Spotify-Playcount (Streams) abrufen ---
 def get_spotify_playcount(track_id, token):
     variables = json.dumps({"uri": f"spotify:track:{track_id}"})
     extensions = json.dumps({
@@ -312,16 +312,14 @@ def update_popularity():
         st.write(f"Song {song_id}: Growth = {growth:.1f}% (Vergleich: {prev} -> {curr})")
         update_growth_for_measurement(latest_entry_id, growth)
     
-    # --- Neue Streams-Aktualisierung ---
     st.write("Aktualisiere Streams für jeden Song...")
-    # Hol die aktuellsten Daten:
+    # Streams-Aktualisierung: Frische Daten laden
     st.cache_data.clear(get_all_tracking_pages)
     st.cache_data.clear(get_tracking_entries)
     updated_entries = get_tracking_entries()
     df_update = pd.DataFrame(updated_entries)
     df_update["date"] = pd.to_datetime(df_update["date"], errors="coerce")
     df_update = df_update.dropna(subset=["date", "song_id"])
-    # Für jeden Song: Hole aus den Metadaten den Spotify-Track-ID und rufe den Playcount ab
     metadata = get_metadata_from_tracking_db()
     for song_id, group in df_update.groupby("song_id"):
         group = group.sort_values("date")
@@ -356,12 +354,6 @@ def get_spotify_playcount(track_id, token):
     data = response.json()
     return int(data["data"]["trackUnion"].get("playcount", 0))
 
-def update_streams_for_measurement(entry_id, streams):
-    url = f"{notion_page_endpoint}/{entry_id}"
-    payload = {"properties": {"Streams": {"number": streams}}}
-    response = requests.patch(url, headers=notion_headers, json=payload)
-    response.raise_for_status()
-
 # --- Sidebar: Refresh Button und Filterformular ---
 with st.sidebar:
     st.markdown("## Automatische Updates")
@@ -385,7 +377,6 @@ with st.sidebar:
         submitted = st.form_submit_button("Filter anwenden")
 
 st.title("ARTIST SCOUT 1.0b")
-
 st.header("Top 10 songs to watch")
 
 tracking_entries = get_tracking_entries()
