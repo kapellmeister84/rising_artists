@@ -308,7 +308,7 @@ with st.sidebar:
         filter_days = filter_timeframe_days[filter_timeframe_option]
         submitted = st.form_submit_button("Filter anwenden")
 
-st.title("Song Tracking Übersicht")
+st.title("ARTIST SCOUT 1.0b")
 
 # 1. Oben: Top 10 Songs – Wachstum über alle Messungen
 st.header("Top 10 songs to watch")
