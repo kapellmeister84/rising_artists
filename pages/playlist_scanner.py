@@ -255,7 +255,7 @@ status_message.empty()
 progress_placeholder.empty()
 promo_placeholder.empty()
         
-        if results:
+    if results:
             song_count = len(results)
             playlist_count = len(unique_playlists)
             artist_name = None
