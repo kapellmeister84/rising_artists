@@ -14,9 +14,9 @@ set_dark_mode()
 set_background("https://wallpapershome.com/images/pages/pic_h/26334.jpg")
 
 # === Notion-Konfiguration ===
-tracking_db_id = "1a9b6204cede80e29338ede2c76999f2"  # Weeks-/Tracking-Datenbank
-songs_database_id = "1a9b6204cede8006b67fd247dc660ba4"  # Songs-Datenbank
-notion_secret = "secret_yYvZbk7zcKy0Joe3usdCHMbbZmAFHnCKrF7NvEkWY6E"
+tracking_db_id = st.secrets["notion"]["tracking_db_id"]   # Weeks-/Tracking-Datenbank
+songs_database_id = st.secrets["notion"]["songs_db_id"]       # Songs-Datenbank
+notion_secret = st.secrets["notion"]["token"]
 notion_query_endpoint = "https://api.notion.com/v1/databases"
 notion_page_endpoint = "https://api.notion.com/v1/pages"
 notion_headers = {
@@ -26,6 +26,10 @@ notion_headers = {
 }
 
 # === Spotify-Konfiguration ===
+SPOTIFY_CLIENT_ID = st.secrets["spotify"]["client_id"]
+SPOTIFY_CLIENT_SECRET = st.secrets["spotify"]["client_secret"]
+
+# Hier kannst du den Token über einen API-Aufruf abrufen – alternativ den Client-Credentials-Flow implementieren:
 def get_spotify_token():
     url = "https://open.spotify.com/get_access_token?reason=transport&productType=web_player"
     response = requests.get(url)
