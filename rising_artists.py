@@ -16,7 +16,7 @@ st.set_page_config(layout="wide")
 # Wir nutzen die neue Songs-Datenbank ("song-database")
 songs_database_id = st.secrets["notion"]["song-database"]
 # measurements-database wird hier nicht benötigt, da dieses Script nur die Song-Daten lädt
-notion_secret = st.secrets["notion"]["token"]
+notion_secret = st.secrets["notion"]["secret"]
 
 # Endpunkt und Header für Notion
 notion_query_endpoint = "https://api.notion.com/v1/databases"
