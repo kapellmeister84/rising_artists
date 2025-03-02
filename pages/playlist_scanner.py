@@ -136,7 +136,7 @@ with st.form("scanner_form"):
     submit = st.form_submit_button("🔍 scan playlists")
 st.markdown('</div>', unsafe_allow_html=True)
 
-    st.markdown(
+st.markdown(
         """
         <script>
         document.getElementById("search_form").addEventListener("submit", function(e) {
