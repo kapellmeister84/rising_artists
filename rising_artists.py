@@ -37,7 +37,10 @@ def get_spotify_token():
     response.raise_for_status()
     return response.json().get("accessToken")
 
+# Beim Start den Token holen und global setzen
 SPOTIFY_TOKEN = get_spotify_token()
+global SPOTIFY_HEADERS
+SPOTIFY_HEADERS = {"Authorization": f"Bearer {SPOTIFY_TOKEN}"}
 
 def get_spotify_popularity(track_id, token):
     """Holt den echten Spotify-Popularity-Wert (0–100) für einen Track."""
@@ -93,7 +96,7 @@ def update_streams_for_measurement(entry_id, streams):
     response = requests.patch(url, headers=notion_headers, json=payload)
     response.raise_for_status()
 
-# Für Streams
+# Angepasst: Playcount-Daten werden jetzt analog zum Playlist Scanner abgerufen
 def get_spotify_playcount(track_id, token):
     variables = json.dumps({"uri": f"spotify:track:{track_id}"})
     extensions = json.dumps({
@@ -103,8 +106,10 @@ def get_spotify_playcount(track_id, token):
         }
     })
     params = {"operationName": "getTrack", "variables": variables, "extensions": extensions}
+    # Nutze den globalen SPOTIFY_HEADERS für den Token
+    token_value = SPOTIFY_HEADERS['Authorization'].split()[1]
+    headers = {"Authorization": f"Bearer {token_value}"}
     url = "https://api-partner.spotify.com/pathfinder/v1/query"
-    headers = {"Authorization": f"Bearer {token}"}
     response = requests.get(url, headers=headers, params=params)
     response.raise_for_status()
     data = response.json()
