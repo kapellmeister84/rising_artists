@@ -251,7 +251,7 @@ def update_popularity():
         payload = {
             "parent": { "database_id": week_database_id },
             "properties": {
-                "Name": { 
+                "Name": {
                     "title": [
                         { "text": { "content": f"Week of {now_iso[:10]}" } }
                     ]
@@ -276,6 +276,7 @@ def update_popularity():
         }
         requests.post(notion_page_endpoint, headers=notion_headers, json=payload)
 
+    # Alle Song-Seiten (mit Pagination) abrufen:
     song_pages = get_all_song_page_ids()
     total = len(song_pages)
     song_to_track = {}
@@ -301,6 +302,7 @@ def update_popularity():
     status_text.empty()
     
     st.write("Berechne Growth für jeden Song...")
+    # Cache leeren
     get_all_tracking_pages.clear()
     get_tracking_entries.clear()
     updated_entries = get_tracking_entries()
