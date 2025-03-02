@@ -90,7 +90,7 @@ def get_songs_metadata():
             country_code = ""
             if "Country Code" in props and props["Country Code"].get("rich_text"):
                 country_code = "".join([t.get("plain_text", "") for t in props["Country Code"]["rich_text"]]).strip()
-            # Measurements: Relation Property
+            # Measurements Relation
             measurements_ids = []
             if "Measurements" in props and props["Measurements"].get("relation"):
                 for rel in props["Measurements"]["relation"]:
@@ -152,20 +152,27 @@ def get_spotify_playcount(track_id, token):
     params = {"operationName": "getTrack", "variables": variables, "extensions": extensions}
     url = "https://api-partner.spotify.com/pathfinder/v1/query"
     headers = {"Authorization": f"Bearer {SPOTIFY_TOKEN}"}
-    response = requests.get(url, headers=headers, params=params)
-    response.raise_for_status()
-    data = response.json()
-    return int(data["data"]["trackUnion"].get("playcount", 0))
+    try:
+        response = requests.get(url, headers=headers, params=params)
+        response.raise_for_status()
+        data = response.json()
+        return int(data["data"]["trackUnion"].get("playcount", 0))
+    except requests.HTTPError as e:
+        st.warning(f"Error fetching playcount for track {track_id}: {e}")
+        return 0
 
 def get_spotify_popularity(track_id, token):
     url = f"https://api.spotify.com/v1/tracks/{track_id}"
     headers = {"Authorization": f"Bearer {token}"}
-    response = requests.get(url, headers=headers)
-    response.raise_for_status()
-    data = response.json()
-    return data.get("popularity", 0)
+    try:
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+        return data.get("popularity", 0)
+    except requests.HTTPError as e:
+        st.warning(f"Error fetching popularity for track {track_id}: {e}")
+        return 0
 
-# Neue Funktion: Monthly Listeners über HTML-Scraping (wie im Beispiel)
 def get_monthly_listeners_from_html(artist_id):
     url = f"https://open.spotify.com/artist/{artist_id}"
     headers = {"User-Agent": "Mozilla/5.0", "Accept-Language": "de"}
@@ -244,30 +251,32 @@ def create_measurement_entry(song, details):
     new_id = response.json().get("id")
     return new_id
 
-def update_song_measurements_relation(page_id, new_measurement_id):
-    url = f"{notion_page_endpoint}/{page_id}"
-    response = requests.get(url, headers=notion_headers)
-    response.raise_for_status()
-    page = response.json()
-    props = page.get("properties", {})
-    current_relations = []
-    if "Measurements" in props and props["Measurements"].get("relation"):
-        current_relations = props["Measurements"]["relation"]
-    if not any(rel.get("id") == new_measurement_id for rel in current_relations):
-        current_relations.append({"id": new_measurement_id})
-    payload = {
-        "properties": {
-            "Measurements": {"relation": current_relations}
+def update_song_measurements_relation(page_id, new_measurement_id, retries=3):
+    for attempt in range(retries):
+        url = f"{notion_page_endpoint}/{page_id}"
+        response = requests.get(url, headers=notion_headers)
+        response.raise_for_status()
+        page = response.json()
+        props = page.get("properties", {})
+        current_relations = []
+        if "Measurements" in props and props["Measurements"].get("relation"):
+            current_relations = props["Measurements"]["relation"]
+        if not any(rel.get("id") == new_measurement_id for rel in current_relations):
+            current_relations.append({"id": new_measurement_id})
+        payload = {
+            "properties": {
+                "Measurements": {"relation": current_relations}
+            }
         }
-    }
-    patch_resp = requests.patch(url, headers=notion_headers, json=payload)
-    try:
-        patch_resp.raise_for_status()
-    except requests.HTTPError as e:
-        if patch_resp.status_code == 409:
-            st.warning(f"Conflict updating Measurements for page {page_id}. Der Eintrag existiert möglicherweise bereits.")
+        patch_resp = requests.patch(url, headers=notion_headers, json=payload)
+        if patch_resp.status_code == 200:
+            return
+        elif patch_resp.status_code == 409:
+            time.sleep(1)  # kurz warten und erneut versuchen
+            continue
         else:
-            raise
+            patch_resp.raise_for_status()
+    st.warning(f"Konnte Measurements für Seite {page_id} nach {retries} Versuchen nicht aktualisieren.")
 
 def fill_song_measurements():
     spotify_token = get_spotify_token()
@@ -279,6 +288,24 @@ def fill_song_measurements():
             update_song_measurements_relation(song["page_id"], new_meas_id)
             messages.append(f"Neue Measurement für {song.get('track_name')} erstellt (ID: {new_meas_id})")
     return messages
+
+#########################
+# Hilfsfunktion: song_exists_in_notion
+#########################
+def song_exists_in_notion(track_id):
+    payload = {
+        "filter": {
+            "property": "Track ID",
+            "rich_text": {"equals": track_id}
+        }
+    }
+    response = requests.post(f"{notion_query_endpoint}/{songs_database_id}/query", headers=notion_headers, json=payload)
+    if response.status_code == 200:
+        results = response.json().get("results", [])
+        return len(results) > 0
+    else:
+        st.error("Fehler beim Abfragen der Notion-Datenbank: " + response.text)
+        return False
 
 #########################
 # Sidebar Buttons
