@@ -5,6 +5,8 @@ import json
 import time
 import re
 from concurrent.futures import ThreadPoolExecutor
+import plotly.express as px
+import pandas as pd
 
 from utils import set_background, set_dark_mode
 
@@ -37,7 +39,12 @@ def get_measurement_details(measurement_id):
     response.raise_for_status()
     data = response.json()
     props = data.get("properties", {})
+    # Wir gehen davon aus, dass die Measurements-Datenbank zusätzlich ein "Timestamp"-Feld hat
+    timestamp = ""
+    if "Timestamp" in props and props["Timestamp"].get("date"):
+        timestamp = props["Timestamp"]["date"].get("start", "")
     return {
+        "timestamp": timestamp,
         "song_pop": int(props.get("Song Pop", {}).get("number") or 0),
         "artist_pop": int(props.get("Artist Pop", {}).get("number") or 0),
         "streams": int(props.get("Streams", {}).get("number") or 0),
@@ -113,7 +120,7 @@ def get_songs_metadata():
             try:
                 details = future.result()
             except Exception as e:
-                details = {"song_pop": 0, "artist_pop": 0, "streams": 0, "monthly_listeners": 0, "artist_followers": 0}
+                details = {"timestamp": "", "song_pop": 0, "artist_pop": 0, "streams": 0, "monthly_listeners": 0, "artist_followers": 0}
             for key, song_data in metadata.items():
                 if measurement_id in song_data.get("measurements_ids", []):
                     if "measurements" not in song_data:
@@ -127,7 +134,6 @@ songs_metadata = get_songs_metadata()
 # Sidebar: Suchfeld, Log-Fenster, Fortschrittsbalken
 ######################################
 st.sidebar.title("Search")
-# Suchfeld: Damit wird die Variable search_query definiert und später im Hauptbereich genutzt
 search_query = st.sidebar.text_input("Search by artist or song:")
 
 if "log_messages" not in st.session_state:
@@ -208,6 +214,9 @@ def get_monthly_listeners_from_html(artist_id):
         log(f"Fehler beim Abrufen der Artist-Seite {artist_id}: Status {r.status_code}")
     return None
 
+######################################
+# Neue Funktion: Aktualisierung von Song-Daten via Spotify
+######################################
 def update_song_data(song, token):
     url = f"https://api.spotify.com/v1/tracks/{song['track_id']}"
     headers = {"Authorization": f"Bearer {token}"}
@@ -251,12 +260,14 @@ def update_song_data(song, token):
 ######################################
 # Neue Funktion: Neue Measurement-Einträge anlegen und Relation aktualisieren
 ######################################
+# Hier wird zusätzlich das Datum als Timestamp gespeichert.
 def create_measurement_entry(song, details):
-    now = datetime.datetime.now().isoformat()
+    now_iso = datetime.datetime.now().isoformat()
     payload = {
         "parent": {"database_id": measurements_db_id},
         "properties": {
-            "Name": {"title": [{"text": {"content": f"Measurement {now}"}}]},
+            "Name": {"title": [{"text": {"content": f"Measurement {now_iso}"}}]},
+            "Timestamp": {"date": {"start": now_iso}},
             "Song": {"relation": [{"id": song["page_id"]}]},
             "Song Pop": {"number": int(details.get("song_pop") or 0)},
             "Artist Pop": {"number": int(details.get("artist_pop") or 0)},
@@ -339,15 +350,50 @@ def group_results_by_artist(results):
     return grouped
 
 ######################################
-# Neue Funktion: Suchergebnisse anzeigen als Karteikarten
+# Neue Funktion: Graphen anzeigen
+######################################
+def display_artist_history(measurements):
+    # measurements: Liste von Measurement-Dictionaries für einen Artist
+    # Wir erwarten, dass jedes Dictionary mindestens "timestamp", "artist_pop", "monthly_listeners" und "artist_followers" enthält
+    if not measurements:
+        st.write("Keine historischen Daten vorhanden.")
+        return
+    # Erstelle einen DataFrame, wobei der Timestamp als Datum geparst wird
+    df = pd.DataFrame(measurements)
+    if "timestamp" in df.columns:
+        df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+    fig = px.line(df, x="timestamp", y=["artist_pop", "monthly_listeners", "artist_followers"],
+                  labels={"timestamp": "Timestamp", "value": "Wert", "variable": "Metric"},
+                  title="Artist History")
+    st.plotly_chart(fig, use_container_width=True)
+
+def display_song_history(measurements):
+    # Zeigt die Entwicklung von Streams und Song Popularity für einen Song
+    if not measurements:
+        st.write("Keine historischen Daten vorhanden.")
+        return
+    df = pd.DataFrame(measurements)
+    if "timestamp" in df.columns:
+        df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+    fig = px.line(df, x="timestamp", y=["song_pop", "streams"],
+                  labels={"timestamp": "Timestamp", "value": "Wert", "variable": "Metric"},
+                  title="Song History")
+    st.plotly_chart(fig, use_container_width=True)
+
+######################################
+# Neue Funktion: Suchergebnisse anzeigen als Karteikarten (gruppiert nach Artist)
 ######################################
 def display_search_results(results):
     st.title("Search Results")
     grouped = group_results_by_artist(results)
     for group_key, songs in grouped.items():
+        # Für den Artist: Verwende das erste Song als Repräsentant
         representative = songs[0]
         artist_name = representative.get("artist_name")
+        artist_id = representative.get("artist_id")
         artist_image = representative.get("latest_measurement", {}).get("artist_image", "")
+        artist_link = f"https://open.spotify.com/artist/{artist_id}" if artist_id else ""
+        # Artist-Karte
         artist_card = f"""
         <div style="
             border: 2px solid #1DB954;
@@ -358,14 +404,26 @@ def display_search_results(results):
             background-color: #f9f9f9;
             ">
             <div style="display: flex; align-items: center;">
-                <img src="{artist_image}" alt="Artist" style="width: 80px; height: 80px; border-radius: 50%; margin-right: 16px;">
+                <a href="{artist_link}" target="_blank">
+                  <img src="{artist_image}" alt="Artist" style="width: 80px; height: 80px; border-radius: 50%; margin-right: 16px;">
+                </a>
                 <h2 style="margin: 0;">{artist_name}</h2>
             </div>
         </div>
         """
         st.markdown(artist_card, unsafe_allow_html=True)
+        # Expander für Artist-History
+        with st.expander("Show Artist History"):
+            # Sammle alle Measurement-Einträge aller Songs dieses Künstlers
+            artist_measurements = []
+            for song in songs:
+                if "measurements" in song:
+                    artist_measurements.extend(song["measurements"])
+            display_artist_history(artist_measurements)
+        # Anzeige der Songs des Künstlers
         st.markdown("<div style='display: flex; flex-wrap: wrap;'>", unsafe_allow_html=True)
         for song in songs:
+            # Hole Cover und Spotify-Song-Link
             cover_url = ""
             track_url = ""
             try:
@@ -379,7 +437,8 @@ def display_search_results(results):
                 track_url = data.get("external_urls", {}).get("spotify", "")
             except Exception as e:
                 log(f"Fehler beim Abrufen des Covers für {song.get('track_name')}: {e}")
-            card_html = f"""
+            # Song-Karte: Das Coverbild ist ein Link zum Song
+            song_card = f"""
             <div style="
                 border: 1px solid #ccc;
                 border-radius: 8px;
@@ -390,28 +449,24 @@ def display_search_results(results):
                 background-color: #ffffff;
                 ">
                 <div style="text-align: center;">
-                    <img src="{cover_url}" alt="Cover" style="width: 100%; border-radius: 4px;">
+                    <a href="{track_url}" target="_blank">
+                      <img src="{cover_url}" alt="Cover" style="width: 100%; border-radius: 4px;">
+                    </a>
                 </div>
                 <h3 style="margin: 8px 0 4px 0;">{song.get("track_name")}</h3>
                 <p style="margin: 4px 0;"><strong>Release Date:</strong> {song.get("release_date")}</p>
                 <hr style="border: none; border-top: 1px solid #eee;">
                 <p style="margin: 4px 0;"><strong>Song Pop:</strong> {song.get("latest_measurement", {}).get("song_pop", 0)}</p>
                 <p style="margin: 4px 0;"><strong>Streams:</strong> {song.get("latest_measurement", {}).get("streams", 0)}</p>
-                <p style="margin: 4px 0;"><strong>Monthly Listeners:</strong> {song.get("latest_measurement", {}).get("monthly_listeners", 0)}</p>
-                <p style="margin: 4px 0;"><strong>Artist Followers:</strong> {song.get("latest_measurement", {}).get("artist_followers", 0)}</p>
-                <div style="text-align: center; margin-top: 8px;">
-                    <a href="{track_url}" target="_blank" style="
-                        text-decoration: none;
-                        color: #1DB954;
-                        font-weight: bold;">Listen on Spotify</a>
-                </div>
             </div>
             """
-            st.markdown(card_html, unsafe_allow_html=True)
+            st.markdown(song_card, unsafe_allow_html=True)
+            with st.expander("Show Song History"):
+                display_song_history(song.get("measurements", []))
         st.markdown("</div>", unsafe_allow_html=True)
 
 ######################################
-# Sidebar Buttons
+# Sidebar Buttons: Get New Music und Get Data
 ######################################
 st.sidebar.title("Actions")
 if st.sidebar.button("Get New Music"):
