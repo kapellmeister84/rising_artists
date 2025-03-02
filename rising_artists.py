@@ -47,14 +47,14 @@ def get_spotify_token():
 def get_web_spotify_token():
     """
     Get a Spotify access token from the web player endpoint.
-    This token is used for retrieving playcount via the partner API.
     """
     response = requests.get("https://open.spotify.com/get_access_token?reason=transport&productType=web_player").json()
     return response["accessToken"]
 
-# Obtain a Spotify token and define global headers for partner API calls.
+# Global tokens und Headers
 SPOTIFY_TOKEN = get_spotify_token()
-SPOTIFY_HEADERS = {"Authorization": f"Bearer {SPOTIFY_TOKEN}"}
+# Wir verwenden für den Partner-API-Call den Web-Player-Token, der in SPOTIFY_HEADERS gespeichert wird:
+SPOTIFY_HEADERS = {"Authorization": f"Bearer {get_web_spotify_token()}"}
 
 #########################
 # SONG & MEASUREMENTS   #
@@ -106,7 +106,7 @@ def get_playlist_songs(playlist_id, token):
             available_markets = track.get("album", {}).get("available_markets", [])
             country_code = available_markets[0] if available_markets else ""
             artist_pop = get_artist_popularity(artist_id, token) if artist_id else 0
-            streams = 0  # To be updated later via playcount
+            streams = 0  # wird später aktualisiert
             songs.append({
                 "song_name": song_name,
                 "artist_name": artist_name,
@@ -225,9 +225,10 @@ def update_measurement_entry(measurement_page_id, song_pop, artist_pop, streams,
         return f"Error updating measurement: {response.text}"
 
 #########################
-# Reliable Playcount via Spotify Partner API
+# Reliable Playcount & Extra Metrics
 #########################
 def get_spotify_playcount(track_id, token):
+    # Verwende exakt die Technik aus deinem "playlist scanner"-Script:
     variables = json.dumps({"uri": f"spotify:track:{track_id}"})
     extensions = json.dumps({
         "persistedQuery": {
@@ -236,9 +237,11 @@ def get_spotify_playcount(track_id, token):
         }
     })
     params = {"operationName": "getTrack", "variables": variables, "extensions": extensions}
-    # Here we use the web player token stored in SPOTIFY_HEADERS
-    headers = {"Authorization": f"Bearer {SPOTIFY_HEADERS['Authorization'].split()[1]}"}
-    response = requests.get("https://api-partner.spotify.com/pathfinder/v1/query", headers=headers, params=params)
+    response = requests.get(
+        "https://api-partner.spotify.com/pathfinder/v1/query",
+        headers={"Authorization": f"Bearer {SPOTIFY_HEADERS['Authorization'].split()[1]}"},
+        params=params
+    )
     response.raise_for_status()
     return int(response.json()["data"]["trackUnion"].get("playcount", 0))
 
