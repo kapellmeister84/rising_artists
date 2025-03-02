@@ -127,6 +127,9 @@ def get_tracking_entries():
 
 @st.cache_data(ttl=300, show_spinner=False)
 def get_spotify_data(spotify_track_id):
+    # Stelle sicher, dass spotify_track_id ein nicht-leerer String ist.
+    if not isinstance(spotify_track_id, str) or not spotify_track_id.strip():
+        return "", ""
     url = f"https://api.spotify.com/v1/tracks/{spotify_track_id}"
     response = requests.get(url, headers={"Authorization": f"Bearer {SPOTIFY_TOKEN}"})
     if response.status_code == 200:
@@ -134,10 +137,9 @@ def get_spotify_data(spotify_track_id):
         cover_url = ""
         if data.get("album") and data["album"].get("images"):
             cover_url = data["album"]["images"][0].get("url", "")
-        spotify_link = data["external_urls"].get("spotify", "")
-        popularity = data.get("popularity", 0)  # Direkt von Spotify
-        return cover_url, spotify_link, popularity
-    return "", "", 0
+        spotify_link = data.get("external_urls", {}).get("spotify", "")
+        return cover_url, spotify_link
+    return "", ""
 
 @st.cache_data(ttl=300, show_spinner=False)
 def get_metadata_from_tracking_db():
