@@ -6,7 +6,6 @@ from concurrent.futures import ThreadPoolExecutor
 
 from utils import set_background, set_dark_mode
 
-# Set page config und Hintergrund
 st.set_page_config(layout="wide")
 set_dark_mode()
 set_background("https://wallpapershome.com/images/pages/pic_h/26334.jpg")
@@ -18,7 +17,6 @@ set_background("https://wallpapershome.com/images/pages/pic_h/26334.jpg")
 songs_database_id = st.secrets["notion"]["song-database"]
 notion_secret = st.secrets["notion"]["secret"]
 
-# Endpunkte und Header für Notion
 notion_query_endpoint = "https://api.notion.com/v1/databases"
 notion_page_endpoint = "https://api.notion.com/v1/pages"
 notion_headers = {
@@ -33,8 +31,8 @@ notion_headers = {
 @st.cache_data(show_spinner=False)
 def get_measurement_details(measurement_id):
     """
-    Ruft für eine Measurement-Seite die Details ab.
-    Erwartete Properties:
+    Ruft für eine Measurement-Seite (ID) die Details ab.
+    Erwartete Properties in der Measurements-Datenbank:
       - Song Pop (number)
       - Artist Pop (number)
       - Streams (number)
@@ -64,7 +62,7 @@ def get_songs_metadata():
       - Track ID (rich_text)
       - Release Date (date)
       - Country Code (rich_text)
-      - Measurements (relation) – Für jeden verknüpften Eintrag werden die Measurement-Details parallel abgefragt.
+      - Measurements (relation) – Falls vorhanden, werden die verknüpften Measurement-Details parallel abgefragt.
     """
     url = f"{notion_query_endpoint}/{songs_database_id}/query"
     payload = {"page_size": 100}
@@ -88,32 +86,32 @@ def get_songs_metadata():
         for page in pages:
             props = page.get("properties", {})
 
-            # Track Name
+            # Track Name (title)
             track_name = ""
             if "Track Name" in props and props["Track Name"].get("title"):
                 track_name = "".join([t.get("plain_text", "") for t in props["Track Name"]["title"]]).strip()
 
-            # Artist Name
+            # Artist Name (rich_text)
             artist_name = ""
             if "Artist Name" in props and props["Artist Name"].get("rich_text"):
                 artist_name = "".join([t.get("plain_text", "") for t in props["Artist Name"]["rich_text"]]).strip()
 
-            # Artist ID
+            # Artist ID (rich_text)
             artist_id = ""
             if "Artist ID" in props and props["Artist ID"].get("rich_text"):
                 artist_id = "".join([t.get("plain_text", "") for t in props["Artist ID"]["rich_text"]]).strip()
 
-            # Track ID
+            # Track ID (rich_text)
             track_id = ""
             if "Track ID" in props and props["Track ID"].get("rich_text"):
                 track_id = "".join([t.get("plain_text", "") for t in props["Track ID"]["rich_text"]]).strip()
 
-            # Release Date
+            # Release Date (date)
             release_date = ""
             if "Release Date" in props and props["Release Date"].get("date"):
                 release_date = props["Release Date"]["date"].get("start", "")
 
-            # Country Code
+            # Country Code (rich_text)
             country_code = ""
             if "Country Code" in props and props["Country Code"].get("rich_text"):
                 country_code = "".join([t.get("plain_text", "") for t in props["Country Code"]["rich_text"]]).strip()
@@ -137,7 +135,7 @@ def get_songs_metadata():
                 "country_code": country_code,
                 "measurements_ids": measurements_ids
             }
-        # Ergänze die Measurement-Details
+        # Ergänze Measurement-Details
         for measurement_id, future in measurement_futures.items():
             try:
                 details = future.result()
@@ -154,33 +152,66 @@ def get_songs_metadata():
 songs_metadata = get_songs_metadata()
 
 #########################
-# Button "Get New Music"
+# Spotify-Konfiguration
 #########################
-st.sidebar.title("Songs Cache")
-if st.sidebar.button("Get New Music"):
-    get_songs_metadata.clear()
-    st.experimental_rerun()
+SPOTIFY_CLIENT_ID = st.secrets["spotify"]["client_id"]
+SPOTIFY_CLIENT_SECRET = st.secrets["spotify"]["client_secret"]
 
-#########################
-# Neuer Button: "Get Data"
-#########################
+def get_spotify_token():
+    url = "https://open.spotify.com/get_access_token?reason=transport&productType=web_player"
+    response = requests.get(url)
+    response.raise_for_status()
+    return response.json().get("accessToken")
+
+SPOTIFY_TOKEN = get_spotify_token()
+
+# Für Playcount: Verwende exakt die Technik aus deinem Scanner-Script
+def get_spotify_playcount(track_id, token):
+    variables = json.dumps({"uri": f"spotify:track:{track_id}"})
+    extensions = json.dumps({
+        "persistedQuery": {
+            "version": 1,
+            "sha256Hash": "26cd58ab86ebba80196c41c3d48a4324c619e9a9d7df26ecca22417e0c50c6a4"
+        }
+    })
+    params = {"operationName": "getTrack", "variables": variables, "extensions": extensions}
+    url = "https://api-partner.spotify.com/pathfinder/v1/query"
+    headers = {"Authorization": f"Bearer {SPOTIFY_TOKEN}"}
+    response = requests.get(url, headers=headers, params=params)
+    response.raise_for_status()
+    data = response.json()
+    return int(data["data"]["trackUnion"].get("playcount", 0))
+
+def get_spotify_popularity(track_id, token):
+    """Holt den Song-Popularity-Wert (0-100) über die offizielle API."""
+    url = f"https://api.spotify.com/v1/tracks/{track_id}"
+    headers = {"Authorization": f"Bearer {token}"}
+    response = requests.get(url, headers=headers)
+    response.raise_for_status()
+    data = response.json()
+    return data.get("popularity", 0)
+
 def update_song_data(song, token):
     """
-    Ruft über die Spotify-API die aktuellen Details zu einem Song ab und gibt ein Dictionary zurück.
-    Erwartete Felder:
-      - song_pop: Track-Popularity
-      - artist_pop: Artist-Popularity
-      - country_code: Aktualisierter Country Code (aus Album)
-      - artist_followers: Follower des Künstlers
+    Ruft über die Spotify-API die aktuellen Song-Daten ab.
+    Für:
+      - Song Pop und Playcount: 
+          - Song Pop holen wir über die offizielle API (get_spotify_popularity)
+          - Playcount (Streams) über die persistierte Query (get_spotify_playcount)
+      - Artist Pop und Follower sowie Country Code: direkt von der offiziellen Artist-API bzw. Album-Daten.
     """
+    # Abruf der Track-Daten
     url = f"https://api.spotify.com/v1/tracks/{song['track_id']}"
     headers = {"Authorization": f"Bearer {token}"}
     response = requests.get(url, headers=headers)
     if response.status_code == 200:
         data = response.json()
+        # Country Code aus den Album-Daten (erste verfügbare Market)
         available_markets = data.get("album", {}).get("available_markets", [])
         country_code = available_markets[0] if available_markets else ""
-        song_pop = data.get("popularity", 0)
+        # Song Pop über offizielle API
+        song_pop = get_spotify_popularity(song["track_id"], token)
+        # Artist-Daten abrufen
         artists = data.get("artists", [])
         artist_id = artists[0].get("id") if artists and artists[0].get("id") else ""
         artist_pop = 0
@@ -192,11 +223,14 @@ def update_song_data(song, token):
                 artist_data = artist_resp.json()
                 artist_pop = artist_data.get("popularity", 0)
                 artist_followers = artist_data.get("followers", {}).get("total", 0)
+        # Playcount (Streams) über persistierte Query
+        streams = get_spotify_playcount(song["track_id"], token)
         return {
             "song_pop": song_pop,
             "artist_pop": artist_pop,
             "country_code": country_code,
-            "artist_followers": artist_followers
+            "artist_followers": artist_followers,
+            "streams": streams
         }
     else:
         st.error(f"Error fetching data for track {song['track_id']}: {response.text}")
@@ -204,8 +238,8 @@ def update_song_data(song, token):
 
 def update_song_details():
     """
-    Iteriert über alle Songs im Cache und aktualisiert die Song-Details in der Notion-Songs-Datenbank
-    (Song Pop, Artist Pop, Country Code und Artist Followers) über einen PATCH-Request.
+    Iteriert über alle Songs im Cache (songs_metadata) und aktualisiert deren Details
+    (Song Pop, Artist Pop, Country Code, Artist Followers, Streams) in der Notion-Songs-Datenbank.
     """
     spotify_token = get_spotify_token()
     messages = []
@@ -220,7 +254,8 @@ def update_song_details():
                     "Song Pop": {"number": details.get("song_pop", 0)},
                     "Artist Pop": {"number": details.get("artist_pop", 0)},
                     "Artist Followers": {"number": details.get("artist_followers", 0)},
-                    "Country Code": {"rich_text": [{"text": {"content": details.get("country_code", "")}}]}
+                    "Country Code": {"rich_text": [{"text": {"content": details.get("country_code", "")}}]},
+                    "Streams": {"number": details.get("streams", 0)}
                 }
             }
             url = f"{notion_page_endpoint}/{page_id}"
@@ -231,13 +266,21 @@ def update_song_details():
                 messages.append(f"Error updating details for {song.get('track_name')}: {response.text}")
     return messages
 
+#########################
+# Sidebar Buttons
+#########################
+st.sidebar.title("Songs Cache")
+if st.sidebar.button("Get New Music"):
+    get_songs_metadata.clear()
+    st.experimental_rerun()
+
 if st.sidebar.button("Get Data"):
     msgs = update_song_details()
     for m in msgs:
         st.write(m)
 
 #########################
-# Anzeige der geladenen Metadaten
+# Anzeige der geladenen Songs-Metadaten
 #########################
 st.title("Songs Metadata from Notion (with Measurements)")
 st.write("Loaded songs metadata:")
