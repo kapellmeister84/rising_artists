@@ -15,7 +15,7 @@ st.set_page_config(layout="wide")
 set_dark_mode()
 set_background("https://wallpapershome.com/images/pages/pic_h/26334.jpg")
 
-# CSS-Anpassungen: Suchfeld und Buttons in Dunkelgrau, Artist-Karte mit weißem Rahmen, Links ohne Unterstreichung
+# CSS-Anpassungen: Suchfeld und Buttons in dunklem Grau, Links ohne Unterstreichung und in Weiß, Artist-Karten mit weißem Rahmen
 st.markdown(
     """
     <style>
@@ -60,7 +60,7 @@ def get_measurement_details(measurement_id):
     response.raise_for_status()
     data = response.json()
     props = data.get("properties", {})
-    # Nutze Notions created_time als Timestamp
+    # Nutze den automatisch gesetzten created_time als Timestamp
     timestamp = data.get("created_time", "")
     return {
         "timestamp": timestamp,
@@ -128,7 +128,7 @@ def get_songs_metadata():
                 "release_date": release_date,
                 "country_code": country_code,
                 "measurements_ids": measurements_ids,
-                "last_edited": last_edited  # Für Update-Prüfung
+                "last_edited": last_edited  # Letzte Bearbeitung
             }
         for measurement_id, future in measurement_futures.items():
             try:
@@ -506,7 +506,7 @@ def display_search_results(results):
         artist_pop = representative.get("latest_measurement", {}).get("artist_pop", 0)
         monthly_listeners = representative.get("latest_measurement", {}).get("monthly_listeners", 0)
         artist_followers = representative.get("latest_measurement", {}).get("artist_followers", 0)
-        # Artist-Karte: Weißer Rahmen, Links ohne Unterstreichung, Hype Score hervorgehoben
+        # Artist-Karte mit weißem Rahmen
         artist_card = f"""
         <div style="
             border: 2px solid #ffffff;
@@ -543,62 +543,57 @@ def display_search_results(results):
                 if "measurements" in s:
                     all_artist_measurements.extend(s["measurements"])
             display_artist_history(all_artist_measurements)
-        st.markdown("<div style='display: flex; flex-wrap: wrap;'>", unsafe_allow_html=True)
+        st.markdown("<div style='display: flex; flex-direction: column;'>", unsafe_allow_html=True)
         for song in songs:
-            # Für jeden Song: Erstelle ein flexibles Layout mit 3 Spalten: Cover, Info, Graph
-            cover_url = ""
-            track_url = ""
+            # Erzeuge Song-Karte mit drei Spalten: Cover, Infos und Graph
+            # Wir nutzen st.columns für ein sauberes Layout
+            cols = st.columns([1, 2, 2])
+            # Link für den Songtitel
             try:
                 url = f"https://api.spotify.com/v1/tracks/{song['track_id']}"
                 headers = {"Authorization": f"Bearer {SPOTIFY_TOKEN}"}
                 resp = requests.get(url, headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
+                cover_url = ""
                 if data.get("album") and data["album"].get("images"):
                     cover_url = data["album"]["images"][0].get("url", "")
                 track_url = data.get("external_urls", {}).get("spotify", "")
             except Exception as e:
                 log(f"Fehler beim Abrufen des Covers für {song.get('track_name')}: {e}")
+                cover_url = ""
+                track_url = ""
             hype_song = compute_song_hype(song)
-            # Erzeuge Song-History-Graph als Plotly-Figur (falls Messdaten vorhanden)
-            fig_song = None
-            if song.get("measurements"):
-                df_song = pd.DataFrame(song.get("measurements"))
-                if "timestamp" in df_song.columns and not df_song["timestamp"].isnull().all():
-                    df_song["timestamp"] = pd.to_datetime(df_song["timestamp"], errors="coerce")
-                    if len(df_song) == 1:
-                        fig_song = px.scatter(df_song, x="timestamp", y=["song_pop", "streams"], 
-                                              labels={"timestamp": "Date", "value": "Value"}, 
-                                              title="Song History")
+            # Link für Songtitel
+            song_title_link = f"<h2><a href='{track_url}' target='_blank'>{song.get('track_name')}</a></h2>"
+            with cols[0]:
+                st.markdown(f'<a href="{track_url}" target="_blank"><img src="{cover_url}" alt="Cover" style="width:100%; border-radius:4px;"></a>', unsafe_allow_html=True)
+            with cols[1]:
+                st.markdown(song_title_link, unsafe_allow_html=True)
+                st.markdown(f"<p><strong>Release Date:</strong> {song.get('release_date')}</p>", unsafe_allow_html=True)
+                st.markdown(f"<p><strong>Song Pop:</strong> {song.get('latest_measurement', {}).get('song_pop', 0)}</p>", unsafe_allow_html=True)
+                st.markdown(f"<p><strong>Streams:</strong> {song.get('latest_measurement', {}).get('streams', 0)}</p>", unsafe_allow_html=True)
+                st.markdown(f"<p><strong>Hype Score:</strong> {hype_song:.1f}</p>", unsafe_allow_html=True)
+            with cols[2]:
+                if song.get("measurements"):
+                    df_song = pd.DataFrame(song.get("measurements"))
+                    if "timestamp" in df_song.columns and not df_song["timestamp"].isnull().all():
+                        df_song["timestamp"] = pd.to_datetime(df_song["timestamp"], errors="coerce")
+                        if len(df_song) == 1:
+                            fig_song = px.scatter(df_song, x="timestamp", y=["song_pop", "streams"],
+                                                  labels={"timestamp": "Date", "value": "Value"},
+                                                  title="Song History")
+                        else:
+                            fig_song = px.line(df_song, x="timestamp", y=["song_pop", "streams"],
+                                               labels={"timestamp": "Date", "value": "Value"},
+                                               title="Song History", markers=True)
+                        st.plotly_chart(fig_song, use_container_width=True)
                     else:
-                        fig_song = px.line(df_song, x="timestamp", y=["song_pop", "streams"], 
-                                           labels={"timestamp": "Date", "value": "Value"}, 
-                                           title="Song History", markers=True)
-            # Song-Karte: Layout in drei Spalten: Cover, Info und Graph (alle rechts neben dem Cover)
-            song_card = f"""
-            <div style="display: flex; border: 1px solid #ccc; border-radius: 8px; padding: 16px; margin: 8px; background-color: #444444; color: #ffffff; box-shadow: 2px 2px 6px rgba(0,0,0,0.1);">
-                <div style="flex: 0 0 150px; text-align: center;">
-                    <a href="{track_url}" target="_blank">
-                      <img src="{cover_url}" alt="Cover" style="width: 100%; border-radius: 4px;">
-                    </a>
-                </div>
-                <div style="flex: 1; padding: 0 16px;">
-                    <p><strong>Release Date:</strong> {song.get("release_date")}</p>
-                    <p><strong>Song Pop:</strong> {song.get("latest_measurement", {}).get("song_pop", 0)}</p>
-                    <p><strong>Streams:</strong> {song.get("latest_measurement", {}).get("streams", 0)}</p>
-                    <p><strong>Hype Score:</strong> {hype_song:.1f}</p>
-                    <p><a href="{track_url}" target="_blank" style="font-size:1.2rem;">{song.get("track_name")}</a></p>
-                </div>
-                <div style="flex: 1; padding: 0 16px;">
-            """
-            if fig_song is not None:
-                song_card += f"""<div>{st.plotly_chart(fig_song, use_container_width=True, output_format="div")}</div>"""
-            else:
-                song_card += "<p>Keine Graphdaten</p>"
-            song_card += "</div></div>"
-            st.markdown(song_card, unsafe_allow_html=True)
+                        st.write("Keine Graphdaten")
+                else:
+                    st.write("Keine Graphdaten")
         st.markdown("</div>", unsafe_allow_html=True)
-
+        
 ######################################
 # Sidebar Buttons: Get New Music und Get Data
 ######################################
