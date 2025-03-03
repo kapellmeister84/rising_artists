@@ -12,10 +12,10 @@ import math
 from utils import set_background, set_dark_mode
 
 st.set_page_config(layout="wide")
-set_dark_mode()
+set_dark_mode()   # Annahme: Diese Funktion setzt einen dunklen Modus via CSS
 set_background("https://wallpapershome.com/images/pages/pic_h/26334.jpg")
 
-# CSS-Anpassungen: Suchfeld und Buttons in schwarz, Links in weiß ohne Unterstreichung, Artist-Karte mit weißem Rahmen
+# CSS-Anpassungen: Suchfeld und Buttons in der Sidebar in Schwarz, Links in Weiß ohne Unterstreichung, Artist-Karte mit weißem Rahmen
 st.markdown(
     """
     <style>
@@ -144,40 +144,47 @@ def get_songs_metadata():
 songs_metadata = get_songs_metadata()
 
 ######################################
-# Neue Hype Score Berechnung
+# Neue Hype Score Berechnung (Skalierung zwischen 0 und 100)
 ######################################
-# Für Songs: Basis = (Streams * 14.8) + (Song Popularity * 8.75) + (Playlist Points * 0.92)
-# Falls Vergleichsdaten vorhanden, wird der Zuwachs (Differenz zur vorangegangenen Messung) addiert.
+# Neue Formeln:
+# Song Hype Score = (Streams * 14.8) + (Song Popularity * 8.75) + (Playlist Points * 0.92)
+# Artist Hype Score = (Streams * 14.8) + (Artist Popularity * 8.75) + (Playlist Points * 0.92)
+# Falls Vergleichsdaten (mindestens 2 Messungen) vorhanden sind, wird der Zuwachs addiert.
 def compute_song_hype(song):
     latest = song.get("latest_measurement", {})
-    # Berechne Playlist-Punkte aus der Anzahl der Playlists (falls vorhanden)
+    # Playlist-Punkte: Anzahl der Playlisten, in denen der Song gelistet ist
     playlist_points = len(song.get("playlists", [])) if song.get("playlists") else 0
     base = (latest.get("streams", 0) * 14.8) + (latest.get("song_pop", 0) * 8.75) + (playlist_points * 0.92)
     measurements = song.get("measurements", [])
     if len(measurements) >= 2:
-        # Sortiere Messungen nach Timestamp
         sorted_ms = sorted(measurements, key=lambda m: m.get("timestamp"))
         previous = sorted_ms[-2]
         prev_base = (previous.get("streams", 0) * 14.8) + (previous.get("song_pop", 0) * 8.75)
         growth = base - prev_base
-        return base + growth
+        value = base + growth
     else:
-        return base
+        value = base
+    # Clampen auf 0 - 100
+    return max(0, min(value, 100))
 
-# Für Artists: Basis = (Streams * 14.8) + (Artist Popularity * 8.75) + (Playlist Points * 0.92)
-# Hier nutzen wir als Playlist-Punkte einen Durchschnittswert über alle Songs des Artists.
 def compute_artist_hype(song):
     latest = song.get("latest_measurement", {})
-    base = (latest.get("streams", 0) * 14.8) + (latest.get("artist_pop", 0) * 8.75)
+    # Playlist-Punkte: Durchschnittliche Anzahl der Playlisten, in denen Songs des Artists auftauchen
+    playlist_points = 0
+    artist_songs = [s for s in songs_metadata.values() if s.get("artist_id") == song.get("artist_id")]
+    if artist_songs:
+        playlist_points = sum(len(s.get("playlists", [])) for s in artist_songs) / len(artist_songs)
+    base = (latest.get("streams", 0) * 14.8) + (latest.get("artist_pop", 0) * 8.75) + (playlist_points * 0.92)
     measurements = song.get("measurements", [])
     if len(measurements) >= 2:
         sorted_ms = sorted(measurements, key=lambda m: m.get("timestamp"))
         previous = sorted_ms[-2]
         prev_base = (previous.get("streams", 0) * 14.8) + (previous.get("artist_pop", 0) * 8.75)
         growth = base - prev_base
-        return base + growth
+        value = base + growth
     else:
-        return base
+        value = base
+    return max(0, min(value, 100))
 
 def update_hype_score_in_measurement(measurement_id, hype_score, retries=5):
     url = f"{notion_page_endpoint}/{measurement_id}"
@@ -204,7 +211,7 @@ def update_hype_score_in_measurement(measurement_id, hype_score, retries=5):
     return False
 
 ######################################
-# Neue Funktion: Artist History-Figur generieren (feste Höhe = 80px)
+# Neue Funktion: Artist History-Figur (feste Höhe = 80px)
 ######################################
 def get_artist_history_figure(measurements, height=80):
     if not measurements:
@@ -220,7 +227,7 @@ def get_artist_history_figure(measurements, height=80):
     return None
 
 ######################################
-# Neue Funktion: Song History-Figur generieren (feste Höhe = 150px)
+# Neue Funktion: Song History-Figur (feste Höhe = 150px)
 ######################################
 def get_song_history_figure(measurements, height=150):
     if not measurements:
@@ -461,7 +468,8 @@ def fill_song_measurements():
             details = update_song_data(song, spotify_token)
             new_meas_id = create_measurement_entry(song, details)
             update_song_measurements_relation(song["page_id"], new_meas_id)
-            # Berechne Song Hype Score unter Berücksichtigung des Zuwachses, falls Vergleichsdaten vorliegen
+            # Berechne Hype Score: Bei mindestens zwei Messungen wird der Zuwachs einbezogen,
+            # sonst nur der Basiswert
             hype = compute_song_hype({"latest_measurement": details, "playlists": song.get("playlists", [])})
             if not update_hype_score_in_measurement(new_meas_id, hype):
                 log(f"Song '{song.get('track_name')}' wird übersprungen aufgrund von Hype-Score-Update-Fehler.")
@@ -551,7 +559,6 @@ def display_search_results(results):
         artist_pop = representative.get("latest_measurement", {}).get("artist_pop", 0)
         monthly_listeners = representative.get("latest_measurement", {}).get("monthly_listeners", 0)
         artist_followers = representative.get("latest_measurement", {}).get("artist_followers", 0)
-        # Artist-Karte in drei Spalten: Bild, Infos und Graph
         cols_artist = st.columns([1, 2, 2])
         with cols_artist[0]:
             st.markdown(f'<a href="{artist_link}" target="_blank"><img src="{artist_image}" alt="Artist" style="width:80px; height:80px; border-radius:50%;"></a>', unsafe_allow_html=True)
@@ -568,7 +575,6 @@ def display_search_results(results):
             else:
                 st.write("No Data")
         st.markdown("---")
-        # Song-Karten: Für jeden Song der Gruppe
         st.markdown("<div style='display: flex; flex-direction: column;'>", unsafe_allow_html=True)
         for song in songs:
             cols_song = st.columns([1, 2, 2])
@@ -627,8 +633,7 @@ if st.sidebar.button("Get New Music", key="get_new_music_button"):
                     log(f"{song.get('name')} existiert bereits.")
                 else:
                     log(f"{song.get('name')} wird erstellt.")
-                    # Hier würde deine Funktion zum Erstellen in Notion aufgerufen werden
-                    # create_notion_page(song)
+                    # Hier sollte die Funktion zum Erstellen in Notion aufgerufen werden, z. B. create_notion_page(song)
             else:
                 log(f"{song.get('name')} hat keine Track ID und wird übersprungen.")
     run_get_new_music()
