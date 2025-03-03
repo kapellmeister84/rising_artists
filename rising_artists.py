@@ -44,7 +44,7 @@ notion_headers = {
 }
 
 ######################################
-# Notion-Daten: Songs-Metadaten inkl. Measurements (Cache)
+# Caching Notion-Daten: Songs-Metadaten inkl. Measurements
 ######################################
 @st.cache_data(show_spinner=False)
 def get_measurement_details(measurement_id):
@@ -53,7 +53,7 @@ def get_measurement_details(measurement_id):
     response.raise_for_status()
     data = response.json()
     props = data.get("properties", {})
-    # Nutze Notions created_time als Timestamp
+    # Nutze den automatisch gesetzten created_time als Timestamp
     timestamp = data.get("created_time", "")
     return {
         "timestamp": timestamp,
@@ -170,16 +170,19 @@ def update_hype_score_in_measurement(measurement_id, hype_score):
 st.sidebar.title("Search")
 search_query = st.sidebar.text_input("Search by artist or song:")
 
+# Direkt unter dem Suchfeld: Start Search Button
+start_search = st.sidebar.button("Start Search", key="start_search_button")
+
 st.sidebar.markdown("## Filters")
 pop_range = st.sidebar.slider("Popularity Range", 0, 100, (0, 100))
 stream_range = st.sidebar.slider("Stream Count Range", 0, 20000000, (0, 20000000), step=100000)
 hype_range = st.sidebar.slider("Hype Score Range", 0, 100, (0, 100))
 sort_option = st.sidebar.selectbox("Sort by", ["Hype Score", "Popularity", "Streams", "Release Date"])
 
-# Zwei Buttons: "Start Search" und "Confirm Filters"
-start_search = st.sidebar.button("Start Search")
-confirm_filters = st.sidebar.button("Confirm Filters")
+# Button für Filter, falls kein Suchbegriff eingegeben wird
+confirm_filters = st.sidebar.button("Confirm Filters", key="confirm_filters_button")
 
+st.sidebar.markdown("---")
 if "log_messages" not in st.session_state:
     st.session_state.log_messages = []
 
@@ -535,7 +538,7 @@ def display_search_results(results):
 # Sidebar Buttons: Get New Music und Get Data
 ######################################
 st.sidebar.title("Actions")
-if st.sidebar.button("Get New Music"):
+if st.sidebar.button("Get New Music", key="get_new_music_button"):
     def run_get_new_music():
         spotify_token = get_spotify_token()
         log(f"Spotify Access Token: {spotify_token}")
@@ -556,7 +559,7 @@ if st.sidebar.button("Get New Music"):
     run_get_new_music()
     log("Get New Music abgeschlossen. Bitte Seite neu laden, um die aktualisierten Daten zu sehen.")
 
-if st.sidebar.button("Get Data"):
+if st.sidebar.button("Get Data", key="get_data_button"):
     msgs = fill_song_measurements()
     for m in msgs:
         log(m)
@@ -622,12 +625,11 @@ def apply_filters_and_sort(results):
     final = {s.get("track_id") or s.get("page_id"): s for s in sorted_results}
     return final
 
-# Wenn einer der Buttons gedrückt wurde: "Start Search" oder "Confirm Filters"
-if st.sidebar.button("Start Search") or st.sidebar.button("Confirm Filters"):
+# Suche ausführen: Entweder per Suchbegriff ("Start Search") oder nur über die Filter ("Confirm Filters")
+if start_search or confirm_filters:
     if search_query:
         results_found = search_songs(search_query)
     else:
-        # Wenn kein Suchbegriff eingegeben wurde, verwende alle Songs
         results_found = songs_metadata
     results_filtered_sorted = apply_filters_and_sort(results_found)
     display_search_results(results_filtered_sorted)
