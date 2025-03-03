@@ -11,9 +11,24 @@ import math
 
 from utils import set_background, set_dark_mode
 
+# Seite konfigurieren und Dark Mode aktivieren, Hintergrund setzen
 st.set_page_config(layout="wide")
 set_dark_mode()
 set_background("https://wallpapershome.com/images/pages/pic_h/26334.jpg")
+
+# CSS-Anpassung, um das Suchfeld heller darzustellen
+st.markdown(
+    """
+    <style>
+    /* Versuche, den Hintergrund des Textinputs in der Sidebar anzupassen */
+    .stTextInput>div>div>input {
+        background-color: #ffffff;
+        color: #000000;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
 ######################################
 # Notion-Konfiguration
@@ -31,7 +46,7 @@ notion_headers = {
 }
 
 ######################################
-# Caching Notion-Daten: Songs-Metadaten inkl. Measurements
+# Notion-Daten: Songs-Metadaten inkl. Measurements (Cache)
 ######################################
 @st.cache_data(show_spinner=False)
 def get_measurement_details(measurement_id):
@@ -40,7 +55,7 @@ def get_measurement_details(measurement_id):
     response.raise_for_status()
     data = response.json()
     props = data.get("properties", {})
-    # Verwende den automatisch gesetzten created_time als Timestamp
+    # Verwende den automatisch von Notion gesetzten created_time als Timestamp
     timestamp = data.get("created_time", "")
     return {
         "timestamp": timestamp,
@@ -123,38 +138,27 @@ def get_songs_metadata():
 songs_metadata = get_songs_metadata()
 
 ######################################
-# Neue Funktionen: Hype Score berechnen basierend auf der Entwicklung
+# Neue Funktionen: Hype Score berechnen (nur auf Grundlage der neuesten Messung)
 ######################################
 def compute_song_hype(song):
-    measurements = song.get("measurements", [])
-    if len(measurements) < 2:
-        return 0
-    # Sortiere Messungen nach Timestamp
-    measurements_sorted = sorted(measurements, key=lambda m: m.get("timestamp"))
-    t0 = pd.to_datetime(measurements_sorted[0]["timestamp"])
-    t1 = pd.to_datetime(measurements_sorted[-1]["timestamp"])
-    dt = (t1 - t0).total_seconds() / 3600.0  # in Stunden
-    if dt == 0:
-        dt = 1
-    growth_pop = (measurements_sorted[-1].get("song_pop", 0) - measurements_sorted[0].get("song_pop", 0)) / dt
-    growth_streams = (measurements_sorted[-1].get("streams", 0) - measurements_sorted[0].get("streams", 0)) / dt
-    # Gewichtung – stellbar: Hier nehmen wir an, dass Wachstum (Trend) ausschlaggebend ist
-    hype = 0.5 * growth_pop + 0.5 * growth_streams
+    m = song.get("latest_measurement", {})
+    P = m.get("song_pop", 0)
+    streams = m.get("streams", 0)
+    # Streams logarithmisch skalieren: Annahme: 10^4 Streams ≈ 100 Punkte
+    S_scaled = min(math.log10(streams + 1) / 4 * 100, 100)
+    # Gewichtung: Song Hype = 40% Song Pop, 60% Streams
+    hype = 0.4 * P + 0.6 * S_scaled
     return hype
 
-def compute_artist_hype(artist_measurements):
-    if not artist_measurements or len(artist_measurements) < 2:
-        return 0
-    measurements_sorted = sorted(artist_measurements, key=lambda m: m.get("timestamp"))
-    t0 = pd.to_datetime(measurements_sorted[0]["timestamp"])
-    t1 = pd.to_datetime(measurements_sorted[-1]["timestamp"])
-    dt = (t1 - t0).total_seconds() / 3600.0
-    if dt == 0:
-        dt = 1
-    growth_artist_pop = (measurements_sorted[-1].get("artist_pop", 0) - measurements_sorted[0].get("artist_pop", 0)) / dt
-    growth_followers = (measurements_sorted[-1].get("artist_followers", 0) - measurements_sorted[0].get("artist_followers", 0)) / dt
-    growth_monthly = (measurements_sorted[-1].get("monthly_listeners", 0) - measurements_sorted[0].get("monthly_listeners", 0)) / dt
-    hype = (growth_artist_pop + growth_followers + growth_monthly) / 3.0
+def compute_artist_hype(song):
+    # Für den Artist nehmen wir nur die neuesten Messwerte des Repräsentanten
+    m = song.get("latest_measurement", {})
+    A = m.get("artist_pop", 0)
+    followers = m.get("artist_followers", 0)
+    monthly = m.get("monthly_listeners", 0)
+    F_scaled = min(math.log10(followers + 1) / 6 * 100, 100)
+    M_scaled = min(math.log10(monthly + 1) / 6 * 100, 100)
+    hype = 0.4 * A + 0.3 * F_scaled + 0.3 * M_scaled
     return hype
 
 def update_hype_score_in_measurement(measurement_id, hype_score):
@@ -349,10 +353,11 @@ def fill_song_measurements():
             details = update_song_data(song, spotify_token)
             new_meas_id = create_measurement_entry(song, details)
             update_song_measurements_relation(song["page_id"], new_meas_id)
-            # Berechne Hype Score für den Song basierend auf allen Messdaten (falls vorhanden)
-            hype = compute_song_hype(song)
-            # Schreibe den Hype Score in den gerade erstellten Measurement-Eintrag
+            # Schreibe den Hype Score basierend auf der neuesten Messung
+            hype = compute_song_hype({"latest_measurement": details})
             update_hype_score_in_measurement(new_meas_id, hype)
+            # Speichere die neuesten Messdaten in song["latest_measurement"]
+            song["latest_measurement"] = details
             messages.append(f"Neue Measurement für {song.get('track_name')} erstellt (ID: {new_meas_id}, Hype: {hype:.1f})")
     return messages
 
@@ -428,64 +433,21 @@ def display_song_history(measurements):
         st.write("Keine Datum-Informationen in den Messdaten vorhanden.")
 
 ######################################
-# Neue Funktionen: Hype Score berechnen basierend auf Trend (nicht Durchschnitt)
-######################################
-def compute_song_hype(song):
-    measurements = song.get("measurements", [])
-    if len(measurements) < 2:
-        return 0
-    ms_sorted = sorted(measurements, key=lambda m: m.get("timestamp"))
-    t0 = pd.to_datetime(ms_sorted[0]["timestamp"])
-    t1 = pd.to_datetime(ms_sorted[-1]["timestamp"])
-    dt = (t1 - t0).total_seconds() / 3600.0  # Stunden
-    if dt == 0:
-        dt = 1
-    # Verwende Differenz Song Pop und Streams als Trendindikator
-    growth_pop = (ms_sorted[-1].get("song_pop", 0) - ms_sorted[0].get("song_pop", 0)) / dt
-    growth_streams = (ms_sorted[-1].get("streams", 0) - ms_sorted[0].get("streams", 0)) / dt
-    # Gewichtung – anpassen: Hier 50% Song Pop Wachstum, 50% Streams Wachstum
-    hype = 0.5 * growth_pop + 0.5 * growth_streams
-    return hype
-
-def compute_artist_hype(artist_measurements):
-    if not artist_measurements or len(artist_measurements) < 2:
-        return 0
-    ms_sorted = sorted(artist_measurements, key=lambda m: m.get("timestamp"))
-    t0 = pd.to_datetime(ms_sorted[0]["timestamp"])
-    t1 = pd.to_datetime(ms_sorted[-1]["timestamp"])
-    dt = (t1 - t0).total_seconds() / 3600.0
-    if dt == 0:
-        dt = 1
-    growth_artist = (ms_sorted[-1].get("artist_pop", 0) - ms_sorted[0].get("artist_pop", 0)) / dt
-    growth_followers = (ms_sorted[-1].get("artist_followers", 0) - ms_sorted[0].get("artist_followers", 0)) / dt
-    growth_monthly = (ms_sorted[-1].get("monthly_listeners", 0) - ms_sorted[0].get("monthly_listeners", 0)) / dt
-    hype = (growth_artist + growth_followers + growth_monthly) / 3.0
-    return hype
-
-######################################
 # Neue Funktion: Suchergebnisse anzeigen als Karteikarten (gruppiert nach Artist)
 ######################################
 def display_search_results(results):
     st.title("Search Results")
     grouped = group_results_by_artist(results)
     for group_key, songs in grouped.items():
-        # Artist-Repräsentant: Verwende das erste Song als Basis
         representative = songs[0]
         artist_name = representative.get("artist_name")
         artist_id = representative.get("artist_id")
         artist_image = representative.get("latest_measurement", {}).get("artist_image", "")
         artist_link = f"https://open.spotify.com/artist/{artist_id}" if artist_id else ""
-        # Berechne den Artist-Hype über alle Messdaten der Gruppe
-        all_artist_measurements = []
-        for s in songs:
-            if "measurements" in s:
-                all_artist_measurements.extend(s["measurements"])
-        hype_artist = compute_artist_hype(all_artist_measurements)
-        # Zusätzliche Artist-Daten (aus dem letzten Messwert des Repräsentanten)
+        hype_artist = compute_artist_hype({"latest_measurement": representative.get("latest_measurement", {})})
         artist_pop = representative.get("latest_measurement", {}).get("artist_pop", 0)
         monthly_listeners = representative.get("latest_measurement", {}).get("monthly_listeners", 0)
         artist_followers = representative.get("latest_measurement", {}).get("artist_followers", 0)
-        # Artist-Karte (dunkles Grau, weißer Text)
         artist_card = f"""
         <div style="
             border: 2px solid #1DB954;
@@ -512,6 +474,10 @@ def display_search_results(results):
         """
         st.markdown(artist_card, unsafe_allow_html=True)
         with st.expander("Show Artist History"):
+            all_artist_measurements = []
+            for s in songs:
+                if "measurements" in s:
+                    all_artist_measurements.extend(s["measurements"])
             display_artist_history(all_artist_measurements)
         st.markdown("<div style='display: flex; flex-wrap: wrap;'>", unsafe_allow_html=True)
         for song in songs:
@@ -529,7 +495,6 @@ def display_search_results(results):
             except Exception as e:
                 log(f"Fehler beim Abrufen des Covers für {song.get('track_name')}: {e}")
             hype_song = compute_song_hype(song)
-            # Song-Karte (dunkles Grau, weißer Text)
             song_card = f"""
             <div style="
                 border: 1px solid #ccc;
@@ -568,7 +533,6 @@ if st.sidebar.button("Get New Music"):
         spotify_token = get_spotify_token()
         log(f"Spotify Access Token: {spotify_token}")
         all_songs = []
-        # Hole Songs aus den angegebenen Playlists
         for pid in st.secrets["spotify"]["playlist_ids"]:
             songs = get_playlist_songs(pid, spotify_token)
             all_songs.extend(songs)
@@ -619,6 +583,7 @@ def search_songs(query):
             details = update_song_data(song, SPOTIFY_TOKEN)
             new_meas_id = create_measurement_entry(song, details)
             update_song_measurements_relation(song["page_id"], new_meas_id)
+            # Speichere die neueste Messung in song["latest_measurement"]
             song["latest_measurement"] = details
             results[key] = song
     return results
