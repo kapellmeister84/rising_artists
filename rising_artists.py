@@ -639,7 +639,7 @@ def toggle_favourite_for_artist(artist_id, new_state=True):
     for song in songs_metadata.values():
         if song.get("artist_id") == artist_id:
             update_favourite_property(song["page_id"], new_state)
-
+st.title("ARTIST SCOUT 1.0")
 #############################
 # Anzeige der Suchergebnisse (Artist- & Song-Karten)
 #############################
@@ -878,7 +878,22 @@ def get_favourite_artists(songs_metadata):
 fav_artists = get_favourite_artists(songs_metadata)
 if fav_artists:
     st.header("Favourites")
-    for aid, songs in fav_artists.items():
-        rep = songs[0]
-        st.markdown(f"• {rep.get('artist_name')}")
-
+    # Vertreter der jeweiligen Artist-Gruppe auswählen
+    fav_reps = [songs[0] for songs in fav_artists.values()]
+    # Galerie in 5 Spalten
+    cols = st.columns(5)
+    for idx, artist in enumerate(fav_reps):
+        with cols[idx % 5]:
+            artist_img = artist.get("latest_measurement", {}).get("artist_image", "")
+            if artist_img:
+                st.image(artist_img, use_column_width=True)
+            else:
+                st.markdown('<div style="width:100%; height:150px; background-color:#444; border-radius:8px; display:flex; align-items:center; justify-content:center; color:#fff;">No Image</div>', unsafe_allow_html=True)
+            artist_name = artist.get("artist_name", "Unbekannt")
+            # Button, der die Suche simuliert
+            if st.button(artist_name, key=f"fav_{artist.get('artist_id', artist_name)}"):
+                st.session_state.search_query = artist_name
+                st.experimental_rerun()
+            # Kurze Infos zum Artist
+            st.markdown(f"<p style='color:#ffffff;'>Popularity: {artist.get('latest_measurement', {}).get('artist_pop', 0)}</p>", unsafe_allow_html=True)
+            st.markdown(f"<p style='color:#ffffff;'>Monthly Listeners: {artist.get('latest_measurement', {}).get('monthly_listeners', 0)}</p>", unsafe_allow_html=True)
