@@ -833,10 +833,10 @@ if st.session_state.recent_searches:
     cols = st.columns(5)
     for idx, tile in enumerate(st.session_state.recent_searches):
         with cols[idx % 5]:
-            # Hier keine target-Attribut – Klick aktualisiert den Suchbegriff in derselben Instanz
+            # target="_self" erzwingt, dass im gleichen Fenster navigiert wird
             link = f"?search_query={tile['artist_name']}"
             st.markdown(f"""
-            <a href="{link}" style="text-decoration: none; color: inherit;">
+            <a href="{link}" target="_self" style="text-decoration: none; color: inherit;">
                 <div style="border: 2px solid #ffffff; border-radius: 8px; padding: 10px; background-color: #444444; text-align: center; cursor: pointer;">
                     <img src="{tile['artist_img']}" alt="{tile['artist_name']}" style="width:120px; height:120px; border-radius:50%; object-fit:cover;">
                     <h3 style="margin: 10px 0 5px 0;">{tile['artist_name']}</h3>
