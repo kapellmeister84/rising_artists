@@ -419,6 +419,7 @@ def toggle_favourite_for_artist(artist_id, new_state=True):
     for song in songs_metadata.values():
         if song.get("artist_id") == artist_id:
             update_favourite_property(song["page_id"], new_state)
+            st.write("Favourite button clicked")
 
 #############################
 # Measurement-Einträge & Hype Score Update
