@@ -11,16 +11,14 @@ import math
 
 from utils import set_background, set_dark_mode
 
-# Seite konfigurieren und Dark Mode aktivieren, Hintergrund setzen
 st.set_page_config(layout="wide")
 set_dark_mode()
 set_background("https://wallpapershome.com/images/pages/pic_h/26334.jpg")
 
-# CSS-Anpassung, um das Suchfeld heller darzustellen
+# CSS-Anpassung für das Suchfeld in der Sidebar (hellerer Hintergrund)
 st.markdown(
     """
     <style>
-    /* Versuche, den Hintergrund des Textinputs in der Sidebar anzupassen */
     .stTextInput>div>div>input {
         background-color: #ffffff;
         color: #000000;
@@ -55,7 +53,7 @@ def get_measurement_details(measurement_id):
     response.raise_for_status()
     data = response.json()
     props = data.get("properties", {})
-    # Verwende den automatisch von Notion gesetzten created_time als Timestamp
+    # Nutze den automatisch gesetzten created_time als Timestamp
     timestamp = data.get("created_time", "")
     return {
         "timestamp": timestamp,
@@ -147,26 +145,24 @@ def compute_song_hype(song):
     # Streams logarithmisch skalieren: Annahme: 10^4 Streams ≈ 100 Punkte
     S_scaled = min(math.log10(streams + 1) / 4 * 100, 100)
     # Gewichtung: Song Hype = 40% Song Pop, 60% Streams
-    hype = 0.4 * P + 0.6 * S_scaled
-    return hype
+    return 0.4 * P + 0.6 * S_scaled
 
 def compute_artist_hype(song):
-    # Für den Artist nehmen wir nur die neuesten Messwerte des Repräsentanten
+    # Nutze die neuesten Messdaten des Repräsentanten
     m = song.get("latest_measurement", {})
     A = m.get("artist_pop", 0)
     followers = m.get("artist_followers", 0)
     monthly = m.get("monthly_listeners", 0)
     F_scaled = min(math.log10(followers + 1) / 6 * 100, 100)
     M_scaled = min(math.log10(monthly + 1) / 6 * 100, 100)
-    hype = 0.4 * A + 0.3 * F_scaled + 0.3 * M_scaled
-    return hype
+    return 0.4 * A + 0.3 * F_scaled + 0.3 * M_scaled
 
 def update_hype_score_in_measurement(measurement_id, hype_score):
     url = f"{notion_page_endpoint}/{measurement_id}"
     payload = {
-        "properties": {
-            "Hype Score": {"number": hype_score}
-        }
+         "properties": {
+              "Hype Score": {"number": hype_score}
+         }
     }
     response = requests.patch(url, headers=notion_headers, json=payload)
     response.raise_for_status()
@@ -353,10 +349,9 @@ def fill_song_measurements():
             details = update_song_data(song, spotify_token)
             new_meas_id = create_measurement_entry(song, details)
             update_song_measurements_relation(song["page_id"], new_meas_id)
-            # Schreibe den Hype Score basierend auf der neuesten Messung
+            # Berechne Hype Score basierend auf den neuesten Messdaten (nur diese)
             hype = compute_song_hype({"latest_measurement": details})
             update_hype_score_in_measurement(new_meas_id, hype)
-            # Speichere die neuesten Messdaten in song["latest_measurement"]
             song["latest_measurement"] = details
             messages.append(f"Neue Measurement für {song.get('track_name')} erstellt (ID: {new_meas_id}, Hype: {hype:.1f})")
     return messages
@@ -444,6 +439,7 @@ def display_search_results(results):
         artist_id = representative.get("artist_id")
         artist_image = representative.get("latest_measurement", {}).get("artist_image", "")
         artist_link = f"https://open.spotify.com/artist/{artist_id}" if artist_id else ""
+        # Berechne den Artist-Hype aus der neuesten Messung des Repräsentanten
         hype_artist = compute_artist_hype({"latest_measurement": representative.get("latest_measurement", {})})
         artist_pop = representative.get("latest_measurement", {}).get("artist_pop", 0)
         monthly_listeners = representative.get("latest_measurement", {}).get("monthly_listeners", 0)
@@ -583,7 +579,9 @@ def search_songs(query):
             details = update_song_data(song, SPOTIFY_TOKEN)
             new_meas_id = create_measurement_entry(song, details)
             update_song_measurements_relation(song["page_id"], new_meas_id)
-            # Speichere die neueste Messung in song["latest_measurement"]
+            # Berechne Hype Score basierend auf den neuesten Messdaten
+            hype = compute_song_hype({"latest_measurement": details})
+            update_hype_score_in_measurement(new_meas_id, hype)
             song["latest_measurement"] = details
             results[key] = song
     return results
