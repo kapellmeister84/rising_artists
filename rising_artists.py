@@ -47,10 +47,6 @@ a:hover {
 </style>
 """, unsafe_allow_html=True)
 
-query_params = st.experimental_get_query_params()
-if "search_query" in query_params:
-    st.session_state.search_query = query_params["search_query"][0]
-
 #############################
 # Notion-Konfiguration
 #############################
@@ -187,6 +183,13 @@ def get_songs_metadata():
     return metadata
 
 songs_metadata = get_songs_metadata()
+
+#############################
+# Query-Parameter auslesen
+#############################
+query_params = st.query_params
+if "search_query" in query_params:
+    st.session_state.search_query = query_params["search_query"][0]
 
 #############################
 # Safe Timestamp (alle Timestamps ohne Zeitzone)
