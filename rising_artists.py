@@ -369,9 +369,7 @@ def update_hype_score_in_measurement(measurement_id, hype_score):
 ######################################
 # Hilfsfunktion: song_exists_in_notion
 ######################################
-def song_exists_in_notion
-
-n(track_id):
+def song_exists_in_notion(track_id):
     payload = {
         "filter": {
             "property": "Track ID",
