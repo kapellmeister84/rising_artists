@@ -183,10 +183,10 @@ def compute_song_hype(song):
             raw = base  # Kaum Veränderung -> nutze nur den Basiswert
         else:
             raw = base + growth
-        K = 100
+        K = 2500
     else:
         raw = base
-        K = 1000  # Höherer K-Wert dämpft den Score im Initialfall
+        K = 2500  # Höherer K-Wert dämpft den Score im Initialfall
     hype = 100 * raw / (raw + K) if raw >= 0 else 0
     return max(0, min(hype, 100))
 
@@ -208,10 +208,10 @@ def compute_artist_hype(song):
             raw = base
         else:
             raw = base + growth
-        K = 100
+        K = 2500
     else:
         raw = base
-        K = 1000
+        K = 5000
     hype = 100 * raw / (raw + K) if raw >= 0 else 0
     return max(0, min(hype, 100))
 
