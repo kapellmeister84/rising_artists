@@ -173,7 +173,7 @@ search_query = st.sidebar.text_input("Search by artist or song:")
 
 st.sidebar.markdown("## Filters")
 pop_range = st.sidebar.slider("Popularity Range", 0, 100, (0, 100))
-stream_range = st.sidebar.slider("Stream Count Range", 0, 10000, (0, 10000), step=100)
+stream_range = st.sidebar.slider("Stream Count Range", 500, 20000000, (500, 20000000), step=1000)
 hype_range = st.sidebar.slider("Hype Score Range", 0, 100, (0, 100))
 sort_option = st.sidebar.selectbox("Sort by", ["Hype Score", "Popularity", "Streams", "Release Date"])
 
