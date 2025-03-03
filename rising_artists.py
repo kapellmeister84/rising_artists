@@ -395,7 +395,12 @@ def update_favourite_property(page_id, new_state):
         }
     }
     r = requests.patch(url, headers=notion_headers, json=payload)
-    r.raise_for_status()
+    try:
+        r.raise_for_status()
+        st.write(f"Update erfolgreich für Seite {page_id}: {r.json()}")
+    except Exception as e:
+        st.error(f"Update fehlgeschlagen für Seite {page_id}: {r.text}")
+        raise e
 
 def is_song_favourite(page_id):
     url = f"{notion_page_endpoint}/{page_id}"
