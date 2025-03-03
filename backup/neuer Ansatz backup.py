@@ -7,12 +7,28 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 import plotly.express as px
 import pandas as pd
+import math
 
 from utils import set_background, set_dark_mode
 
+# Seite konfigurieren und Dark Mode aktivieren, Hintergrund setzen
 st.set_page_config(layout="wide")
 set_dark_mode()
 set_background("https://wallpapershome.com/images/pages/pic_h/26334.jpg")
+
+# CSS-Anpassung, um das Suchfeld heller darzustellen
+st.markdown(
+    """
+    <style>
+    /* Versuche, den Hintergrund des Textinputs in der Sidebar anzupassen */
+    .stTextInput>div>div>input {
+        background-color: #ffffff;
+        color: #000000;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
 ######################################
 # Notion-Konfiguration
@@ -30,7 +46,7 @@ notion_headers = {
 }
 
 ######################################
-# Caching Notion-Daten: Songs-Metadaten inkl. Measurements
+# Notion-Daten: Songs-Metadaten inkl. Measurements (Cache)
 ######################################
 @st.cache_data(show_spinner=False)
 def get_measurement_details(measurement_id):
@@ -39,7 +55,7 @@ def get_measurement_details(measurement_id):
     response.raise_for_status()
     data = response.json()
     props = data.get("properties", {})
-    # Verwende created_time als Timestamp
+    # Verwende den automatisch von Notion gesetzten created_time als Timestamp
     timestamp = data.get("created_time", "")
     return {
         "timestamp": timestamp,
@@ -120,6 +136,40 @@ def get_songs_metadata():
     return metadata
 
 songs_metadata = get_songs_metadata()
+
+######################################
+# Neue Funktionen: Hype Score berechnen (nur auf Grundlage der neuesten Messung)
+######################################
+def compute_song_hype(song):
+    m = song.get("latest_measurement", {})
+    P = m.get("song_pop", 0)
+    streams = m.get("streams", 0)
+    # Streams logarithmisch skalieren: Annahme: 10^4 Streams ≈ 100 Punkte
+    S_scaled = min(math.log10(streams + 1) / 4 * 100, 100)
+    # Gewichtung: Song Hype = 40% Song Pop, 60% Streams
+    hype = 0.4 * P + 0.6 * S_scaled
+    return hype
+
+def compute_artist_hype(song):
+    # Für den Artist nehmen wir nur die neuesten Messwerte des Repräsentanten
+    m = song.get("latest_measurement", {})
+    A = m.get("artist_pop", 0)
+    followers = m.get("artist_followers", 0)
+    monthly = m.get("monthly_listeners", 0)
+    F_scaled = min(math.log10(followers + 1) / 6 * 100, 100)
+    M_scaled = min(math.log10(monthly + 1) / 6 * 100, 100)
+    hype = 0.4 * A + 0.3 * F_scaled + 0.3 * M_scaled
+    return hype
+
+def update_hype_score_in_measurement(measurement_id, hype_score):
+    url = f"{notion_page_endpoint}/{measurement_id}"
+    payload = {
+        "properties": {
+            "Hype Score": {"number": hype_score}
+        }
+    }
+    response = requests.patch(url, headers=notion_headers, json=payload)
+    response.raise_for_status()
 
 ######################################
 # Sidebar: Suchfeld, Log-Fenster, Fortschrittsbalken
@@ -254,7 +304,7 @@ def create_measurement_entry(song, details):
         "parent": {"database_id": measurements_db_id},
         "properties": {
             "Name": {"title": [{"text": {"content": f"Measurement {now}"}}]},
-            "Date created": {"date": {"start": now}},  # Property angepasst: "date created"
+            # "date created" wird automatisch von Notion gesetzt
             "Song": {"relation": [{"id": song["page_id"]}]},
             "Song Pop": {"number": int(details.get("song_pop") or 0)},
             "Artist Pop": {"number": int(details.get("artist_pop") or 0)},
@@ -303,8 +353,23 @@ def fill_song_measurements():
             details = update_song_data(song, spotify_token)
             new_meas_id = create_measurement_entry(song, details)
             update_song_measurements_relation(song["page_id"], new_meas_id)
-            messages.append(f"Neue Measurement für {song.get('track_name')} erstellt (ID: {new_meas_id})")
+            # Schreibe den Hype Score basierend auf der neuesten Messung
+            hype = compute_song_hype({"latest_measurement": details})
+            update_hype_score_in_measurement(new_meas_id, hype)
+            # Speichere die neuesten Messdaten in song["latest_measurement"]
+            song["latest_measurement"] = details
+            messages.append(f"Neue Measurement für {song.get('track_name')} erstellt (ID: {new_meas_id}, Hype: {hype:.1f})")
     return messages
+
+def update_hype_score_in_measurement(measurement_id, hype_score):
+    url = f"{notion_page_endpoint}/{measurement_id}"
+    payload = {
+         "properties": {
+              "Hype Score": {"number": hype_score}
+         }
+    }
+    response = requests.patch(url, headers=notion_headers, json=payload)
+    response.raise_for_status()
 
 ######################################
 # Hilfsfunktion: song_exists_in_notion
@@ -374,16 +439,15 @@ def display_search_results(results):
     st.title("Search Results")
     grouped = group_results_by_artist(results)
     for group_key, songs in grouped.items():
-        # Artist-Repräsentant
         representative = songs[0]
         artist_name = representative.get("artist_name")
         artist_id = representative.get("artist_id")
         artist_image = representative.get("latest_measurement", {}).get("artist_image", "")
         artist_link = f"https://open.spotify.com/artist/{artist_id}" if artist_id else ""
+        hype_artist = compute_artist_hype({"latest_measurement": representative.get("latest_measurement", {})})
         artist_pop = representative.get("latest_measurement", {}).get("artist_pop", 0)
         monthly_listeners = representative.get("latest_measurement", {}).get("monthly_listeners", 0)
         artist_followers = representative.get("latest_measurement", {}).get("artist_followers", 0)
-        # Artist-Karte (dunkles Grau, weißer Text)
         artist_card = f"""
         <div style="
             border: 2px solid #1DB954;
@@ -403,17 +467,18 @@ def display_search_results(results):
                   <p style="margin: 4px 0;">Popularity: {artist_pop}</p>
                   <p style="margin: 4px 0;">Monthly Listeners: {monthly_listeners}</p>
                   <p style="margin: 4px 0;">Followers: {artist_followers}</p>
+                  <p style="margin: 4px 0; font-weight: bold;">Hype Score: {hype_artist:.1f}</p>
                 </div>
             </div>
         </div>
         """
         st.markdown(artist_card, unsafe_allow_html=True)
         with st.expander("Show Artist History"):
-            artist_measurements = []
-            for song in songs:
-                if "measurements" in song:
-                    artist_measurements.extend(song["measurements"])
-            display_artist_history(artist_measurements)
+            all_artist_measurements = []
+            for s in songs:
+                if "measurements" in s:
+                    all_artist_measurements.extend(s["measurements"])
+            display_artist_history(all_artist_measurements)
         st.markdown("<div style='display: flex; flex-wrap: wrap;'>", unsafe_allow_html=True)
         for song in songs:
             cover_url = ""
@@ -429,6 +494,7 @@ def display_search_results(results):
                 track_url = data.get("external_urls", {}).get("spotify", "")
             except Exception as e:
                 log(f"Fehler beim Abrufen des Covers für {song.get('track_name')}: {e}")
+            hype_song = compute_song_hype(song)
             song_card = f"""
             <div style="
                 border: 1px solid #ccc;
@@ -450,6 +516,7 @@ def display_search_results(results):
                 <hr style="border: none; border-top: 1px solid #888;">
                 <p style="margin: 4px 0;"><strong>Song Pop:</strong> {song.get("latest_measurement", {}).get("song_pop", 0)}</p>
                 <p style="margin: 4px 0;"><strong>Streams:</strong> {song.get("latest_measurement", {}).get("streams", 0)}</p>
+                <p style="margin: 4px 0;"><strong>Hype Score:</strong> {hype_song:.1f}</p>
             </div>
             """
             st.markdown(song_card, unsafe_allow_html=True)
@@ -516,6 +583,7 @@ def search_songs(query):
             details = update_song_data(song, SPOTIFY_TOKEN)
             new_meas_id = create_measurement_entry(song, details)
             update_song_measurements_relation(song["page_id"], new_meas_id)
+            # Speichere die neueste Messung in song["latest_measurement"]
             song["latest_measurement"] = details
             results[key] = song
     return results
