@@ -7,8 +7,8 @@ import re
 import math
 import plotly.express as px
 import pandas as pd
+import os
 from concurrent.futures import ThreadPoolExecutor
-
 from utils import set_background, set_dark_mode
 
 # --- Page Configuration & Dark Mode ---
@@ -147,7 +147,6 @@ def get_songs_metadata():
             if "Country Code" in props and props["Country Code"].get("rich_text"):
                 country_code = "".join([t.get("plain_text", "") for t in props["Country Code"]["rich_text"]]).strip()
             last_edited = page.get("last_edited_time", "")
-            # Neues: Favourite-Status auslesen
             favourite = False
             if "Favourite" in props:
                 favourite = props["Favourite"].get("checkbox", False)
@@ -199,7 +198,7 @@ def safe_timestamp(m):
         return datetime.datetime.min
 
 #############################
-# Hype Score Berechnung (ohne Playlisten)
+# Hype Score Berechnung
 #############################
 def compute_song_hype(song):
     measurements = song.get("measurements", [])
@@ -573,7 +572,6 @@ def display_search_results(results):
         for song in songs:
             with st.container():
                 cols_song = st.columns([1, 2])
-                # Linke Spalte: Cover und Infos
                 with cols_song[0]:
                     try:
                         track_url = f"https://api.spotify.com/v1/tracks/{song['track_id']}"
@@ -594,7 +592,6 @@ def display_search_results(results):
                     st.markdown(f"<p style='color:#ffffff;'><strong>Release Date:</strong> {song.get('release_date')}</p>", unsafe_allow_html=True)
                     st.markdown(f"<p style='color:#ffffff;'><strong>Song Pop:</strong> {song.get('latest_measurement', {}).get('song_pop', 0)}</p>", unsafe_allow_html=True)
                     st.markdown(f"<p style='font-size:1.2rem; color:#ffffff;'><strong>Hype Score: <span style='font-size:1.6rem; color:#FFD700;'>{compute_song_hype(song):.1f}</span></strong></p>", unsafe_allow_html=True)
-                # Rechte Spalte: Graphen, die den verfügbaren Platz nutzen
                 with cols_song[1]:
                     st.markdown("<p style='color:#ffffff;'>Streams</p>", unsafe_allow_html=True)
                     fig_streams = get_song_streams_figure(song.get("measurements", []))
@@ -707,9 +704,6 @@ if st.sidebar.button("Get Data", key="get_data_button"):
     for msg in msgs:
         log(msg)
 
-#############################
-# Suchergebnisse: Filtern & Sortieren
-#############################
 def song_exists_in_notion(track_id):
     payload = {
         "filter": {
@@ -776,18 +770,35 @@ else:
     st.write("Bitte einen Suchbegriff eingeben oder Filter bestätigen.")
 
 #############################
-# Zuletzt angesehen (Recent Searches)
+# Persistente Speicherung für "Zuletzt angesehen"
 #############################
-# Beim App-Start: Aktualisiere die gespeicherten "Zuletzt angesehen"-Einträge mit aktuellen Messwerten
-if "recent_searches" in st.session_state:
+RECENT_SEARCHES_FILE = "recent_searches.json"
+
+def load_recent_searches():
+    if os.path.exists(RECENT_SEARCHES_FILE):
+        with open(RECENT_SEARCHES_FILE, "r") as f:
+            return json.load(f)
+    return []
+
+def save_recent_searches(data):
+    with open(RECENT_SEARCHES_FILE, "w") as f:
+        json.dump(data, f)
+
+# Beim Start der App: Lade gespeicherte "Zuletzt angesehen"-Einträge in den Session-State
+if "recent_searches" not in st.session_state:
+    st.session_state.recent_searches = load_recent_searches()
+
+# Aktualisiere die gespeicherten "Zuletzt angesehen"-Einträge mit aktuellen Messwerten
+if st.session_state.recent_searches:
     for tile in st.session_state.recent_searches:
         for song in songs_metadata.values():
             if song.get("artist_name") == tile["artist_name"]:
                 new_meas = song.get("latest_measurement", {})
-                tile["artist_img"] = new_meas.get("artist_image", tile["artist_img"])
-                tile["artist_pop"] = new_meas.get("artist_pop", tile["artist_pop"])
-                tile["monthly_listeners"] = new_meas.get("monthly_listeners", tile["monthly_listeners"])
+                tile["artist_img"] = new_meas.get("artist_image", tile.get("artist_img"))
+                tile["artist_pop"] = new_meas.get("artist_pop", tile.get("artist_pop"))
+                tile["monthly_listeners"] = new_meas.get("monthly_listeners", tile.get("monthly_listeners"))
                 break
+    save_recent_searches(st.session_state.recent_searches)
 
 # Nach einer Suche: Speichere die Ergebnisse in den Session-State (maximal 5, ohne Duplikate)
 if start_search or confirm_filters:
@@ -803,15 +814,14 @@ if start_search or confirm_filters:
                 "monthly_listeners": rep.get("latest_measurement", {}).get("monthly_listeners", 0)
             }
             recent_tiles.append(tile)
-        if "recent_searches" not in st.session_state:
-            st.session_state.recent_searches = []
         for tile in recent_tiles:
             if tile not in st.session_state.recent_searches:
                 st.session_state.recent_searches.insert(0, tile)
         st.session_state.recent_searches = st.session_state.recent_searches[:5]
+        save_recent_searches(st.session_state.recent_searches)
 
 # Anzeige der "Zuletzt angesehen"-Sektion als 5-Spalten-Raster
-if "recent_searches" in st.session_state and st.session_state.recent_searches:
+if st.session_state.recent_searches:
     st.header("Zuletzt angesehen")
     cols = st.columns(5)
     for idx, tile in enumerate(st.session_state.recent_searches):
