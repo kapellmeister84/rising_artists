@@ -394,6 +394,7 @@ def update_favourite_property(page_id, new_state):
             "Favourite": {"checkbox": new_state}
         }
     }
+    st.write(f"Updating page {page_id} with payload: {payload}")  # Debug-Ausgabe
     r = requests.patch(url, headers=notion_headers, json=payload)
     try:
         r.raise_for_status()
