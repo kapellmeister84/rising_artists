@@ -155,10 +155,7 @@ def get_songs_metadata():
             if "Country Code" in props and props["Country Code"].get("rich_text"):
                 country_code = "".join([t.get("plain_text", "") for t in props["Country Code"]["rich_text"]]).strip()
             last_edited = page.get("last_edited_time", "")
-            # Neues: Favourite-Status auslesen
-            favourite = False
-            if "Favourite" in props:
-                favourite = props["Favourite"].get("checkbox", False)
+            
             measurements_ids = []
             if "Measurements" in props and props["Measurements"].get("relation"):
                 for rel in props["Measurements"]["relation"]:
@@ -176,7 +173,6 @@ def get_songs_metadata():
                 "release_date": release_date,
                 "country_code": country_code,
                 "last_edited": last_edited,
-                "favourite": favourite,
                 "measurements_ids": measurements_ids
             }
         for measurement_id, future in measurement_futures.items():
@@ -384,42 +380,7 @@ def update_song_data(song, token):
         st.error(f"Error fetching data for track {song['track_name']}: {r.text}")
         return {}
 
-#############################
-# Favourites-Funktionalität
-#############################
-def update_favourite_property(page_id, new_state):
-    url = f"{notion_page_endpoint}/{page_id}"
-    payload = {
-        "properties": {
-            "Favourite": {"checkbox": new_state}
-        }
-    }
-    st.write(f"Updating page {page_id} with payload: {payload}")  # Debug-Ausgabe
-    r = requests.patch(url, headers=notion_headers, json=payload)
-    try:
-        r.raise_for_status()
-        st.write(f"Update successful for page {page_id}: {r.json()}")
-    except Exception as e:
-        st.error(f"Update failed for page {page_id}: {r.text}")
-        raise e
 
-def is_song_favourite(page_id):
-    url = f"{notion_page_endpoint}/{page_id}"
-    r = requests.get(url, headers=notion_headers)
-    r.raise_for_status()
-    return r.json().get("properties", {}).get("Favourite", {}).get("checkbox", False)
-
-def is_artist_favourite(artist_id):
-    for song in songs_metadata.values():
-        if song.get("artist_id") == artist_id and is_song_favourite(song["page_id"]):
-            return True
-    return False
-
-def toggle_favourite_for_artist(artist_id, new_state=True):
-    for song in songs_metadata.values():
-        if song.get("artist_id") == artist_id:
-            update_favourite_property(song["page_id"], new_state)
-            
 
 #############################
 # Measurement-Einträge & Hype Score Update
@@ -610,35 +571,7 @@ def group_results_by_artist(results):
         grouped[group_key].append(song)
     return grouped
 
-#############################
-# Favourites-Funktionalität
-#############################
-def is_song_favourite(page_id):
-    url = f"{notion_page_endpoint}/{page_id}"
-    r = requests.get(url, headers=notion_headers)
-    r.raise_for_status()
-    return r.json().get("properties", {}).get("Favourite", {}).get("checkbox", False)
 
-def is_artist_favourite(artist_id):
-    for song in songs_metadata.values():
-        if song.get("artist_id") == artist_id and is_song_favourite(song["page_id"]):
-            return True
-    return False
-
-def update_favourite_property(page_id, new_state):
-    url = f"{notion_page_endpoint}/{page_id}"
-    payload = {
-        "properties": {
-            "Favourite": {"checkbox": new_state}
-        }
-    }
-    r = requests.patch(url, headers=notion_headers, json=payload)
-    r.raise_for_status()
-
-def toggle_favourite_for_artist(artist_id, new_state=True):
-    for song in songs_metadata.values():
-        if song.get("artist_id") == artist_id:
-            update_favourite_property(song["page_id"], new_state)
 st.title("ARTIST SCOUT 1.0")
 #############################
 # Anzeige der Suchergebnisse (Artist- & Song-Karten)
@@ -656,8 +589,6 @@ def display_search_results(results):
         monthly_listeners = rep.get("latest_measurement", {}).get("monthly_listeners", 0)
         artist_followers = rep.get("latest_measurement", {}).get("artist_followers", 0)
         artist_img = rep.get("latest_measurement", {}).get("artist_image", "")
-        fav_state = rep.get("favourite", False)
-        star_icon = "★" if fav_state else "☆"
         
         # Artist-Karte
         with st.container():
@@ -678,14 +609,7 @@ def display_search_results(results):
                     fig_follow = get_artist_followers_figure(rep.get("measurements", []))
                     if fig_follow:
                         st.plotly_chart(fig_follow, use_container_width=True)
-            with cols_artist[3]:
-                # Verwende einen Button mit unique key, ohne st.experimental_rerun() – 
-                # stattdessen den lokalen Status in st.session_state updaten
-                if st.button(f"{star_icon}", key=f"fav_{artist_id}"):
-                    toggle_favourite_for_artist(artist_id, not fav_state)
-                    st.session_state.fav_updated = True
-            st.markdown("</div>", unsafe_allow_html=True)
-        st.markdown("---")
+            
         
         # Song-Karten des Artists
         for song in songs:
@@ -862,39 +786,3 @@ else:
     for art in top10:
         st.markdown(f"• {art.get('artist_name')} – Hype Score: {compute_artist_hype(art):.1f}")
 
-#############################
-# Favourites-Sektion
-#############################
-def get_favourite_artists(songs_metadata):
-    artist_map = {}
-    for s in songs_metadata.values():
-        aid = s.get("artist_id")
-        if aid not in artist_map:
-            artist_map[aid] = []
-        if is_song_favourite(s["page_id"]):
-            artist_map[aid].append(s)
-    return {aid: songs for aid, songs in artist_map.items() if songs}
-
-fav_artists = get_favourite_artists(songs_metadata)
-if fav_artists:
-    st.header("Favourites")
-    fav_reps = [songs[0] for songs in fav_artists.values()]
-    cols = st.columns(5)
-    for idx, artist in enumerate(fav_reps):
-        with cols[idx % 5]:
-            artist_img = artist.get("latest_measurement", {}).get("artist_image", "")
-            artist_name = artist.get("artist_name", "Unbekannt")
-            artist_pop = artist.get("latest_measurement", {}).get("artist_pop", 0)
-            monthly_listeners = artist.get("latest_measurement", {}).get("monthly_listeners", 0)
-            # Erstelle einen Link, der den Suchbegriff in der URL setzt
-            link = f"?search_query={artist_name}"
-            st.markdown(f"""
-            <a href="{link}" style="text-decoration: none; color: inherit;">
-                <div style="border: 2px solid #ffffff; border-radius: 8px; padding: 10px; background-color: #444444; text-align: center; cursor: pointer;">
-                    <img src="{artist_img}" alt="{artist_name}" style="width:120px; height:120px; border-radius:50%; object-fit:cover;">
-                    <h3 style="margin: 10px 0 5px 0;">{artist_name}</h3>
-                    <p style="margin: 0; color:#ffffff;">Popularity: {artist_pop}</p>
-                    <p style="margin: 0; color:#ffffff;">Monthly Listeners: {monthly_listeners}</p>
-                </div>
-            </a>
-            """, unsafe_allow_html=True)
