@@ -47,6 +47,10 @@ a:hover {
 </style>
 """, unsafe_allow_html=True)
 
+query_params = st.experimental_get_query_params()
+if "search_query" in query_params:
+    st.session_state.search_query = query_params["search_query"][0]
+
 #############################
 # Notion-Konfiguration
 #############################
