@@ -12,7 +12,7 @@ import math
 from utils import set_background, set_dark_mode
 
 st.set_page_config(layout="wide")
-set_dark_mode()   # Setzt den dunklen Modus via utils.py
+set_dark_mode()   # Setzt den dunklen Modus (über CSS in utils.py)
 set_background("https://wallpapershome.com/images/pages/pic_h/26334.jpg")
 
 # CSS-Anpassungen: Suchfeld und Buttons in der Sidebar in Schwarz; Links in Weiß ohne Unterstreichung; Artist-Karten mit weißem Rahmen
@@ -143,7 +143,8 @@ def get_songs_metadata():
                 "release_date": release_date,
                 "country_code": country_code,
                 "measurements_ids": measurements_ids,
-                "last_edited": last_edited
+                "last_edited": last_edited,
+                "playlists": []  # Platzhalter; Playlist-Daten werden hier nicht mehr berücksichtigt
             }
         for measurement_id, future in measurement_futures.items():
             try:
@@ -162,78 +163,47 @@ songs_metadata = get_songs_metadata()
 ######################################
 # Neue Hype Score Berechnung (ohne Playlisten)
 ######################################
-# Es werden ausschließlich Streams und Popularity (bzw. Artist Popularity) berücksichtigt.
-# Bei Vergleichsdaten wird der Wachstumseffekt einbezogen – falls die Messwerte sich signifikant unterscheiden.
-# Liegen keine (oder kaum unterschiedliche) Vergleichsdaten vor, wird ein fixer initialer Score (auf Basis der aktuellen Werte) verwendet.
+# Berechnung ausschließlich basierend auf Streams und Popularity (bzw. Artist Popularity).
+# Falls mindestens zwei Messungen vorliegen und signifikantes Wachstum erkennbar ist, wird der Zuwachs einbezogen.
+# Andernfalls (wenn keine unterschiedlichen Daten vorliegen) wird 0 zurückgegeben.
 def compute_song_hype(song):
-    latest = song.get("latest_measurement", {})
-    # Nutze log10, um große Unterschiede bei Streams zu dämpfen
-    streams = latest.get("streams", 0)
-    log_streams = math.log10(streams + 1)
-    song_pop = latest.get("song_pop", 0)
-    
-    # Basiswert: Log-Streams und Popularity kombiniert
-    base = (log_streams * 14.8) + (song_pop * 8.75)
-    
     measurements = song.get("measurements", [])
-    # Verwende einen kleineren Schwellwert, da die log-Transformation Unterschiede mildert
-    EPSILON = 0.5  
-    if len(measurements) >= 2:
-        sorted_ms = sorted(measurements, key=lambda m: m.get("timestamp"))
-        previous = sorted_ms[-2]
-        prev_streams = previous.get("streams", 0)
-        log_prev_streams = math.log10(prev_streams + 1)
-        prev_pop = previous.get("song_pop", 0)
-        prev_base = (log_prev_streams * 14.8) + (prev_pop * 8.75)
-        growth = base - prev_base
-        # Wenn das Wachstum vernachlässigbar ist, nutze nur den Basiswert
-        if abs(growth) < EPSILON:
-            raw = base
-        else:
-            raw = base + growth
-        # Bei signifikanten Vergleichsdaten: Verwende einen moderateren K-Faktor
-        K = 100
-    else:
-        # Initialer Fall: Mit log-transformierten Werten und einem höheren K, um zu hohe Scores zu vermeiden
-        raw = base
-        K = 1000  
+    if len(measurements) < 2:
+        # Wenn es keine Vergleichsdaten gibt, wird 0 ausgegeben.
+        return 0
+    sorted_ms = sorted(measurements, key=lambda m: m.get("timestamp"))
+    latest = sorted_ms[-1]
+    previous = sorted_ms[-2]
+    growth_streams = latest.get("streams", 0) - previous.get("streams", 0)
+    growth_pop = latest.get("song_pop", 0) - previous.get("song_pop", 0)
+    EPSILON = 5  # Schwellwert für signifikantes Wachstum
+    if abs(growth_streams) < EPSILON and abs(growth_pop) < EPSILON:
+        return 0  # Keine signifikanten Unterschiede
+    # Basiswert (mit Dämpfung der Streams über log10)
+    log_streams = math.log10(latest.get("streams", 0) + 1)
+    base = (log_streams * 14.8) + (latest.get("song_pop", 0) * 8.75)
+    # Inklusive Wachstum
+    raw = base + (growth_streams * 14.8) + (growth_pop * 8.75)
+    K = 100
     hype = 100 * raw / (raw + K) if raw >= 0 else 0
     return max(0, min(hype, 100))
 
 def compute_artist_hype(song):
-    latest = song.get("latest_measurement", {})
-    streams = latest.get("streams", 0)
-    log_streams = math.log10(streams + 1)
-    artist_pop = latest.get("artist_pop", 0)
-    base = (log_streams * 14.8) + (artist_pop * 8.75)
-    
-    # Errechne den Durchschnittswert aller Songs des Künstlers
-    artist_songs = [s for s in songs_metadata.values() if s.get("artist_id") == song.get("artist_id")]
-    if artist_songs:
-        avg_base = sum((math.log10(s.get("latest_measurement", {}).get("streams", 0) + 1) * 14.8) + 
-                       (s.get("latest_measurement", {}).get("artist_pop", 0) * 8.75)
-                       for s in artist_songs) / len(artist_songs)
-    else:
-        avg_base = base
-
     measurements = song.get("measurements", [])
-    EPSILON = 0.5
-    if len(measurements) >= 2:
-        sorted_ms = sorted(measurements, key=lambda m: m.get("timestamp"))
-        previous = sorted_ms[-2]
-        prev_streams = previous.get("streams", 0)
-        log_prev_streams = math.log10(prev_streams + 1)
-        prev_pop = previous.get("artist_pop", 0)
-        prev_base = (log_prev_streams * 14.8) + (prev_pop * 8.75)
-        growth = base - prev_base
-        if abs(growth) < EPSILON:
-            raw = base
-        else:
-            raw = base + growth
-        K = 100
-    else:
-        raw = base
-        K = 1000
+    if len(measurements) < 2:
+        return 0
+    sorted_ms = sorted(measurements, key=lambda m: m.get("timestamp"))
+    latest = sorted_ms[-1]
+    previous = sorted_ms[-2]
+    growth_streams = latest.get("streams", 0) - previous.get("streams", 0)
+    growth_pop = latest.get("artist_pop", 0) - previous.get("artist_pop", 0)
+    EPSILON = 5
+    if abs(growth_streams) < EPSILON and abs(growth_pop) < EPSILON:
+        return 0
+    log_streams = math.log10(latest.get("streams", 0) + 1)
+    base = (log_streams * 14.8) + (latest.get("artist_pop", 0) * 8.75)
+    raw = base + (growth_streams * 14.8) + (growth_pop * 8.75)
+    K = 100
     hype = 100 * raw / (raw + K) if raw >= 0 else 0
     return max(0, min(hype, 100))
 
@@ -401,7 +371,6 @@ def update_song_data(song, token):
     response = requests.get(url, headers=headers)
     if response.status_code == 200:
         data = response.json()
-        # Wähle bevorzugte Märkte DE, AT, CH
         preferred_markets = {"DE", "AT", "CH"}
         available_markets = data.get("album", {}).get("available_markets", [])
         country_code = ""
@@ -518,7 +487,9 @@ def fill_song_measurements():
             details = update_song_data(song, spotify_token)
             new_meas_id = create_measurement_entry(song, details)
             update_song_measurements_relation(song["page_id"], new_meas_id)
-            # Hype Score Berechnung: Falls Vergleichsdaten vorhanden und sich signifikant unterscheiden, wird der Wachstumseffekt einbezogen.
+            # Hype Score Berechnung:
+            # Falls mindestens zwei Messungen vorhanden sind und es signifikante Unterschiede gibt, wird der Wachstumseffekt einbezogen.
+            # Andernfalls (keine signifikanten Unterschiede) wird 0 als Hype Score gesetzt.
             measurements = song.get("measurements", [])
             EPSILON = 5
             if len(measurements) >= 2:
@@ -527,16 +498,17 @@ def fill_song_measurements():
                 prev_streams = previous.get("streams", 0)
                 prev_pop = previous.get("song_pop", 0)
                 prev_base = (prev_streams * 14.8) + (prev_pop * 8.75)
-                current_base = (details.get("streams", 0) * 14.8) + (details.get("song_pop", 0) * 8.75)
+                current_streams = details.get("streams", 0)
+                current_pop = details.get("song_pop", 0)
+                current_base = (current_streams * 14.8) + (current_pop * 8.75)
                 growth = current_base - prev_base
                 if abs(growth) < EPSILON:
-                    raw = current_base
+                    raw = 0
                 else:
                     raw = current_base + growth
                 K = 100
             else:
-                raw = (details.get("streams", 0) * 14.8) + (details.get("song_pop", 0) * 8.75)
-                K = 1000
+                raw = 0  # Falls keine Vergleichsdaten vorliegen, wird 0 eingetragen.
             hype = 100 * raw / (raw + K) if raw >= 0 else 0
             if not update_hype_score_in_measurement(new_meas_id, hype):
                 log(f"Song '{song.get('track_name')}' wird übersprungen aufgrund von Hype-Score-Update-Fehler.")
@@ -740,7 +712,8 @@ def search_songs(query):
             details = update_song_data(song, SPOTIFY_TOKEN)
             new_meas_id = create_measurement_entry(song, details)
             update_song_measurements_relation(song["page_id"], new_meas_id)
-            hype = compute_song_hype({"latest_measurement": details})
+            # Berechne den Song Hype Score basierend auf Vergleichsdaten – falls keine Unterschiede vorliegen, wird 0 zurückgegeben.
+            hype = compute_song_hype(song)
             update_hype_score_in_measurement(new_meas_id, hype)
             song["latest_measurement"] = details
             results[key] = song
@@ -752,7 +725,7 @@ def apply_filters_and_sort(results):
         lm = song.get("latest_measurement", {})
         pop = lm.get("song_pop", 0)
         streams = lm.get("streams", 0)
-        hype = compute_song_hype({"latest_measurement": lm})
+        hype = compute_song_hype(song)
         if pop < pop_range[0] or pop > pop_range[1]:
             continue
         if streams < stream_range[0] or streams > stream_range[1]:
@@ -762,7 +735,7 @@ def apply_filters_and_sort(results):
         filtered[key] = song
     sorted_results = list(filtered.values())
     if sort_option == "Hype Score":
-        sorted_results.sort(key=lambda s: compute_song_hype({"latest_measurement": s.get("latest_measurement", {})}), reverse=True)
+        sorted_results.sort(key=lambda s: compute_song_hype(s), reverse=True)
     elif sort_option == "Popularity":
         sorted_results.sort(key=lambda s: s.get("latest_measurement", {}).get("song_pop", 0), reverse=True)
     elif sort_option == "Streams":
