@@ -15,7 +15,7 @@ st.set_page_config(layout="wide")
 set_dark_mode()
 set_background("https://wallpapershome.com/images/pages/pic_h/26334.jpg")
 
-# CSS-Anpassung für das Suchfeld in der Sidebar (hellerer Hintergrund)
+# CSS: Suchfeld heller gestalten
 st.markdown(
     """
     <style>
@@ -53,7 +53,7 @@ def get_measurement_details(measurement_id):
     response.raise_for_status()
     data = response.json()
     props = data.get("properties", {})
-    # Nutze created_time als Timestamp
+    # Nutze Notions created_time als Timestamp
     timestamp = data.get("created_time", "")
     return {
         "timestamp": timestamp,
@@ -136,14 +136,13 @@ def get_songs_metadata():
 songs_metadata = get_songs_metadata()
 
 ######################################
-# Neue Funktionen: Hype Score berechnen (nur auf Grundlage der neuesten Messung)
+# Hype Score Berechnung (nur anhand der neuesten Messung)
 ######################################
 def compute_song_hype(song):
     m = song.get("latest_measurement", {})
     P = m.get("song_pop", 0)
     streams = m.get("streams", 0)
     S_scaled = min(math.log10(streams + 1) / 4 * 100, 100)
-    # Gewichtung: 40% Song Pop, 60% Streams
     return 0.4 * P + 0.6 * S_scaled
 
 def compute_artist_hype(song):
@@ -166,16 +165,20 @@ def update_hype_score_in_measurement(measurement_id, hype_score):
     response.raise_for_status()
 
 ######################################
-# Sidebar: Suchfeld, Log-Fenster, Filter und Sortierung
+# Sidebar: Suchfeld, Filter, Log & Buttons
 ######################################
 st.sidebar.title("Search")
 search_query = st.sidebar.text_input("Search by artist or song:")
 
 st.sidebar.markdown("## Filters")
 pop_range = st.sidebar.slider("Popularity Range", 0, 100, (0, 100))
-stream_range = st.sidebar.slider("Stream Count Range", 500, 20000000, (500, 20000000), step=1000)
+stream_range = st.sidebar.slider("Stream Count Range", 0, 20000000, (0, 20000000), step=100000)
 hype_range = st.sidebar.slider("Hype Score Range", 0, 100, (0, 100))
 sort_option = st.sidebar.selectbox("Sort by", ["Hype Score", "Popularity", "Streams", "Release Date"])
+
+# Zwei Buttons: "Start Search" und "Confirm Filters"
+start_search = st.sidebar.button("Start Search")
+confirm_filters = st.sidebar.button("Confirm Filters")
 
 if "log_messages" not in st.session_state:
     st.session_state.log_messages = []
@@ -447,7 +450,6 @@ def display_search_results(results):
         artist_pop = representative.get("latest_measurement", {}).get("artist_pop", 0)
         monthly_listeners = representative.get("latest_measurement", {}).get("monthly_listeners", 0)
         artist_followers = representative.get("latest_measurement", {}).get("artist_followers", 0)
-        # Künstlerbanner: Hype Score auffällig positioniert (z.B. größere, fette Schrift rechts)
         artist_card = f"""
         <div style="
             border: 2px solid #1DB954;
@@ -588,23 +590,19 @@ def search_songs(query):
             details = update_song_data(song, SPOTIFY_TOKEN)
             new_meas_id = create_measurement_entry(song, details)
             update_song_measurements_relation(song["page_id"], new_meas_id)
-            # Aktualisiere Hype Score in der Measurement (neueste Messung)
             hype = compute_song_hype({"latest_measurement": details})
             update_hype_score_in_measurement(new_meas_id, hype)
             song["latest_measurement"] = details
-            # Füge das Ergebnis hinzu
             results[key] = song
     return results
 
 def apply_filters_and_sort(results):
-    # Filter basierend auf dem Suchformular in der Sidebar
     filtered = {}
     for key, song in results.items():
         lm = song.get("latest_measurement", {})
         pop = lm.get("song_pop", 0)
         streams = lm.get("streams", 0)
         hype = compute_song_hype({"latest_measurement": lm})
-        # Filter: Popularity, Streams, Hype Score
         if pop < pop_range[0] or pop > pop_range[1]:
             continue
         if streams < stream_range[0] or streams > stream_range[1]:
@@ -612,7 +610,6 @@ def apply_filters_and_sort(results):
         if hype < hype_range[0] or hype > hype_range[1]:
             continue
         filtered[key] = song
-    # Sortierung: Wir sortieren basierend auf dem gewünschten Sortierkriterium
     sorted_results = list(filtered.values())
     if sort_option == "Hype Score":
         sorted_results.sort(key=lambda s: compute_song_hype({"latest_measurement": s.get("latest_measurement", {})}), reverse=True)
@@ -622,15 +619,18 @@ def apply_filters_and_sort(results):
         sorted_results.sort(key=lambda s: s.get("latest_measurement", {}).get("streams", 0), reverse=True)
     elif sort_option == "Release Date":
         sorted_results.sort(key=lambda s: s.get("release_date", ""), reverse=True)
-    # Wir erstellen ein Dictionary zurück
     final = {s.get("track_id") or s.get("page_id"): s for s in sorted_results}
     return final
 
-if search_query:
-    results_found = search_songs(search_query)
-    # Wende Filter und Sortierung an
+# Wenn einer der Buttons gedrückt wurde: "Start Search" oder "Confirm Filters"
+if st.sidebar.button("Start Search") or st.sidebar.button("Confirm Filters"):
+    if search_query:
+        results_found = search_songs(search_query)
+    else:
+        # Wenn kein Suchbegriff eingegeben wurde, verwende alle Songs
+        results_found = songs_metadata
     results_filtered_sorted = apply_filters_and_sort(results_found)
     display_search_results(results_filtered_sorted)
 else:
     st.title("Search Results")
-    st.write("Bitte einen Suchbegriff in der Sidebar eingeben.")
+    st.write("Bitte einen Suchbegriff eingeben oder Filter bestätigen.")
