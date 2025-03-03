@@ -53,7 +53,7 @@ def get_measurement_details(measurement_id):
     response.raise_for_status()
     data = response.json()
     props = data.get("properties", {})
-    # Nutze den automatisch gesetzten created_time als Timestamp
+    # Nutze created_time als Timestamp
     timestamp = data.get("created_time", "")
     return {
         "timestamp": timestamp,
@@ -142,13 +142,11 @@ def compute_song_hype(song):
     m = song.get("latest_measurement", {})
     P = m.get("song_pop", 0)
     streams = m.get("streams", 0)
-    # Streams logarithmisch skalieren: Annahme: 10^4 Streams ≈ 100 Punkte
     S_scaled = min(math.log10(streams + 1) / 4 * 100, 100)
-    # Gewichtung: Song Hype = 40% Song Pop, 60% Streams
+    # Gewichtung: 40% Song Pop, 60% Streams
     return 0.4 * P + 0.6 * S_scaled
 
 def compute_artist_hype(song):
-    # Nutze die neuesten Messdaten des Repräsentanten
     m = song.get("latest_measurement", {})
     A = m.get("artist_pop", 0)
     followers = m.get("artist_followers", 0)
@@ -168,10 +166,16 @@ def update_hype_score_in_measurement(measurement_id, hype_score):
     response.raise_for_status()
 
 ######################################
-# Sidebar: Suchfeld, Log-Fenster, Fortschrittsbalken
+# Sidebar: Suchfeld, Log-Fenster, Filter und Sortierung
 ######################################
 st.sidebar.title("Search")
 search_query = st.sidebar.text_input("Search by artist or song:")
+
+st.sidebar.markdown("## Filters")
+pop_range = st.sidebar.slider("Popularity Range", 0, 100, (0, 100))
+stream_range = st.sidebar.slider("Stream Count Range", 0, 10000, (0, 10000), step=100)
+hype_range = st.sidebar.slider("Hype Score Range", 0, 100, (0, 100))
+sort_option = st.sidebar.selectbox("Sort by", ["Hype Score", "Popularity", "Streams", "Release Date"])
 
 if "log_messages" not in st.session_state:
     st.session_state.log_messages = []
@@ -349,7 +353,7 @@ def fill_song_measurements():
             details = update_song_data(song, spotify_token)
             new_meas_id = create_measurement_entry(song, details)
             update_song_measurements_relation(song["page_id"], new_meas_id)
-            # Berechne Hype Score basierend auf den neuesten Messdaten (nur diese)
+            # Berechne Hype Score basierend auf den neuesten Messdaten
             hype = compute_song_hype({"latest_measurement": details})
             update_hype_score_in_measurement(new_meas_id, hype)
             song["latest_measurement"] = details
@@ -407,7 +411,7 @@ def display_artist_history(measurements):
     if "timestamp" in df.columns and not df["timestamp"].isnull().all():
         df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
         fig = px.line(df, x="timestamp", y=["artist_pop", "monthly_listeners", "artist_followers"],
-                      labels={"timestamp": "Date", "value": "Wert", "variable": "Metric"},
+                      labels={"timestamp": "Date", "value": "Value", "variable": "Metric"},
                       title="Artist History")
         st.plotly_chart(fig, use_container_width=True)
     else:
@@ -421,7 +425,7 @@ def display_song_history(measurements):
     if "timestamp" in df.columns and not df["timestamp"].isnull().all():
         df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
         fig = px.line(df, x="timestamp", y=["song_pop", "streams"],
-                      labels={"timestamp": "Date", "value": "Wert", "variable": "Metric"},
+                      labels={"timestamp": "Date", "value": "Value", "variable": "Metric"},
                       title="Song History")
         st.plotly_chart(fig, use_container_width=True)
     else:
@@ -439,11 +443,11 @@ def display_search_results(results):
         artist_id = representative.get("artist_id")
         artist_image = representative.get("latest_measurement", {}).get("artist_image", "")
         artist_link = f"https://open.spotify.com/artist/{artist_id}" if artist_id else ""
-        # Berechne den Artist-Hype aus der neuesten Messung des Repräsentanten
         hype_artist = compute_artist_hype({"latest_measurement": representative.get("latest_measurement", {})})
         artist_pop = representative.get("latest_measurement", {}).get("artist_pop", 0)
         monthly_listeners = representative.get("latest_measurement", {}).get("monthly_listeners", 0)
         artist_followers = representative.get("latest_measurement", {}).get("artist_followers", 0)
+        # Künstlerbanner: Hype Score auffällig positioniert (z.B. größere, fette Schrift rechts)
         artist_card = f"""
         <div style="
             border: 2px solid #1DB954;
@@ -453,6 +457,9 @@ def display_search_results(results):
             box-shadow: 2px 2px 6px rgba(0,0,0,0.1);
             background-color: #444444;
             color: #ffffff;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
             ">
             <div style="display: flex; align-items: center;">
                 <a href="{artist_link}" target="_blank">
@@ -463,8 +470,10 @@ def display_search_results(results):
                   <p style="margin: 4px 0;">Popularity: {artist_pop}</p>
                   <p style="margin: 4px 0;">Monthly Listeners: {monthly_listeners}</p>
                   <p style="margin: 4px 0;">Followers: {artist_followers}</p>
-                  <p style="margin: 4px 0; font-weight: bold;">Hype Score: {hype_artist:.1f}</p>
                 </div>
+            </div>
+            <div style="font-size: 2rem; font-weight: bold; color: #FFD700;">
+                {hype_artist:.1f}
             </div>
         </div>
         """
@@ -569,7 +578,7 @@ def song_exists_in_notion(track_id):
         return False
 
 ######################################
-# Hauptbereich: Suchergebnisse anzeigen (nur Ergebnisse)
+# Hauptbereich: Suchergebnisse anzeigen (Filter & Sortierung)
 ######################################
 def search_songs(query):
     query_lower = query.lower()
@@ -579,16 +588,49 @@ def search_songs(query):
             details = update_song_data(song, SPOTIFY_TOKEN)
             new_meas_id = create_measurement_entry(song, details)
             update_song_measurements_relation(song["page_id"], new_meas_id)
-            # Berechne Hype Score basierend auf den neuesten Messdaten
+            # Aktualisiere Hype Score in der Measurement (neueste Messung)
             hype = compute_song_hype({"latest_measurement": details})
             update_hype_score_in_measurement(new_meas_id, hype)
             song["latest_measurement"] = details
+            # Füge das Ergebnis hinzu
             results[key] = song
     return results
 
+def apply_filters_and_sort(results):
+    # Filter basierend auf dem Suchformular in der Sidebar
+    filtered = {}
+    for key, song in results.items():
+        lm = song.get("latest_measurement", {})
+        pop = lm.get("song_pop", 0)
+        streams = lm.get("streams", 0)
+        hype = compute_song_hype({"latest_measurement": lm})
+        # Filter: Popularity, Streams, Hype Score
+        if pop < pop_range[0] or pop > pop_range[1]:
+            continue
+        if streams < stream_range[0] or streams > stream_range[1]:
+            continue
+        if hype < hype_range[0] or hype > hype_range[1]:
+            continue
+        filtered[key] = song
+    # Sortierung: Wir sortieren basierend auf dem gewünschten Sortierkriterium
+    sorted_results = list(filtered.values())
+    if sort_option == "Hype Score":
+        sorted_results.sort(key=lambda s: compute_song_hype({"latest_measurement": s.get("latest_measurement", {})}), reverse=True)
+    elif sort_option == "Popularity":
+        sorted_results.sort(key=lambda s: s.get("latest_measurement", {}).get("song_pop", 0), reverse=True)
+    elif sort_option == "Streams":
+        sorted_results.sort(key=lambda s: s.get("latest_measurement", {}).get("streams", 0), reverse=True)
+    elif sort_option == "Release Date":
+        sorted_results.sort(key=lambda s: s.get("release_date", ""), reverse=True)
+    # Wir erstellen ein Dictionary zurück
+    final = {s.get("track_id") or s.get("page_id"): s for s in sorted_results}
+    return final
+
 if search_query:
     results_found = search_songs(search_query)
-    display_search_results(results_found)
+    # Wende Filter und Sortierung an
+    results_filtered_sorted = apply_filters_and_sort(results_found)
+    display_search_results(results_filtered_sorted)
 else:
     st.title("Search Results")
     st.write("Bitte einen Suchbegriff in der Sidebar eingeben.")
