@@ -12,10 +12,13 @@ import math
 from utils import set_background, set_dark_mode
 
 st.set_page_config(layout="wide")
-set_dark_mode()   # Setzt den dunklen Modus via utils.py
+set_dark_mode()   # Setzt den dunklen Modus (über CSS in utils.py)
 set_background("https://wallpapershome.com/images/pages/pic_h/26334.jpg")
 
-# CSS-Anpassungen: Suchfeld und Buttons in der Sidebar schwarz; Links in Weiß ohne Unterstreichung; Artist-Karte mit weißem Rahmen
+# CSS-Anpassungen: 
+# - Suchfeld und Buttons in der Sidebar in Schwarz
+# - Alle Links in Weiß ohne Unterstreichung
+# - Artist-Karten haben einen weißen Rahmen
 st.markdown(
     """
     <style>
@@ -29,6 +32,22 @@ st.markdown(
     a {
         color: #ffffff;
         text-decoration: none;
+    }
+    .artist-card {
+        border: 2px solid #ffffff;
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 16px;
+        background-color: #444444;
+        color: #ffffff;
+    }
+    .song-card {
+        border: 1px solid #ccc;
+        border-radius: 8px;
+        padding: 16px;
+        margin: 8px;
+        background-color: #444444;
+        color: #ffffff;
     }
     </style>
     """,
@@ -127,7 +146,9 @@ def get_songs_metadata():
                 "release_date": release_date,
                 "country_code": country_code,
                 "measurements_ids": measurements_ids,
-                "last_edited": last_edited
+                "last_edited": last_edited,
+                # Wir fügen Platzhalter für Playlist-Daten hinzu (wird vom Scanner aktualisiert)
+                "playlists": []
             }
         for measurement_id, future in measurement_futures.items():
             try:
@@ -144,46 +165,87 @@ def get_songs_metadata():
 songs_metadata = get_songs_metadata()
 
 ######################################
-# Neue Hype Score Berechnung (unter Einbeziehung der Playlist-Follower)
+# Playlist Scanner: Aktualisiere Playlist-Daten für jeden Song
 ######################################
-# Wir definieren:
-# Playlist Points (Song) = (Anzahl der Playlisten) + (Summe der Follower der Playlisten / SCALE)
-# Playlist Points (Artist) = Durchschnitt über alle Songs des Künstlers
-SCALE = 1000000  # Skalierungsfaktor für die Followerzahlen
+# Hier wird einmalig (z. B. bei "Get New Music") der Playlist-Scanner ausgeführt,
+# um für jeden Song die Playlisten zu erfassen, in denen er vorkommt.
+def update_playlist_info():
+    # Beispielhafte Playlist-IDs (die größten und wichtigsten im deutschsprachigen Raum)
+    spotify_playlist_ids = st.secrets["spotify"]["playlist_ids"]
+    all_playlists = []
+    spotify_token = get_spotify_token()
+    for pid in spotify_playlist_ids:
+        url = f"https://api.spotify.com/v1/playlists/{pid}"
+        headers = {"Authorization": f"Bearer {spotify_token}"}
+        resp = requests.get(url, headers=headers)
+        if resp.status_code == 200:
+            data = resp.json()
+            # Für jeden Song in der Playlist speichern wir: Name, URL, und Follower (wenn vorhanden)
+            # (Die Follower-Zahl der Playlist erhält man aus "followers.total")
+            playlist_data = {
+                "name": data.get("name", ""),
+                "url": data.get("external_urls", {}).get("spotify", ""),
+                "followers": data.get("followers", {}).get("total", 0)
+            }
+            all_playlists.append(playlist_data)
+    # Nun gehen wir alle Songs in songs_metadata durch und setzen, falls vorhanden, eine
+    # Liste von Playlist-Daten, in denen der Song auftaucht.
+    # (Hier wird angenommen, dass der Songname als Schlüssel in den Playlist-Suchergebnissen genutzt wird.)
+    for song in songs_metadata.values():
+        song_name = song.get("track_name", "").lower()
+        song_playlists = []
+        for pl in all_playlists:
+            # Simpel: Falls der Songname im Playlistnamen (oder – besser: in einer Suchabfrage) enthalten ist.
+            # Hier müsste ggf. eine bessere Matching-Logik implementiert werden.
+            if song_name in pl.get("name", "").lower():
+                song_playlists.append(pl)
+        song["playlists"] = song_playlists
 
+# Rufe den Playlist-Scanner einmalig auf (zum Beispiel beim "Get New Music")
+update_playlist_info()
+
+######################################
+# Neue Hype Score Berechnung (ohne Playlist-Follower, nur Anzahl der Playlisten)
+######################################
+# Wir passen die Berechnung so an:
+# - Wenn mindestens zwei unterschiedliche Messungen vorliegen und sich Streams oder Popularity ändern,
+#   wird der Zuwachs berücksichtigt.
+# - Falls die Messungen identisch sind oder sich kaum unterscheiden, wird ein initialer Hype Score
+#   auf Basis von Streams und Popularity (ohne Wachstum) festgelegt.
 def compute_song_hype(song):
     latest = song.get("latest_measurement", {})
     streams = latest.get("streams", 0)
     song_pop = latest.get("song_pop", 0)
-    # Playlist-Punkte: Nur Anzahl der Playlisten, in denen der Song gelistet ist.
+    # Playlist-Punkte: Nur Anzahl der Playlisten
     playlist_points = len(song.get("playlists", []))
     base = (streams * 14.8) + (song_pop * 8.75) + (playlist_points * 0.92)
     measurements = song.get("measurements", [])
-    # Schwellwert, ab dem Unterschiede als signifikant gelten (anpassbar)
-    EPSILON = 5  
+    EPSILON = 5  # Schwellwert für Unterschiede
     if len(measurements) >= 2:
         sorted_ms = sorted(measurements, key=lambda m: m.get("timestamp"))
         previous = sorted_ms[-2]
-        prev_base = (previous.get("streams", 0) * 14.8) + (previous.get("song_pop", 0) * 8.75)
+        prev_streams = previous.get("streams", 0)
+        prev_pop = previous.get("song_pop", 0)
+        prev_base = (prev_streams * 14.8) + (prev_pop * 8.75)
         growth = base - prev_base
-        # Falls der Unterschied zu gering ist, wird ein fester Initialwert verwendet
         if abs(growth) < EPSILON:
-            raw = 30
+            # Falls Wachstum vernachlässigbar ist, initialen Score basierend auf Streams und Popularity festlegen
+            raw = (streams * 14.8) + (song_pop * 8.75)
         else:
             raw = base + growth
         K = 100
     else:
-        raw = 30  # Fester Startwert, wenn keine Vergleichsdaten vorhanden sind
-        K = 100
+        # Falls keine Vergleichsdaten vorliegen, setze einen fixen Basiswert (z. B. basierend auf Streams und Popularity)
+        raw = (streams * 14.8) + (song_pop * 8.75)
+        K = 1000  # Höherer K-Wert dämpft den initialen Score
     hype = 100 * raw / (raw + K) if raw >= 0 else 0
     return max(0, min(hype, 100))
-
 
 def compute_artist_hype(song):
     latest = song.get("latest_measurement", {})
     streams = latest.get("streams", 0)
     artist_pop = latest.get("artist_pop", 0)
-    # Berechne den Durchschnitt der Playlist-Punkte aller Songs des Künstlers
+    # Berechne den Durchschnitt der Playlist-Punkte aller Songs des Künstlers (nur Anzahl)
     artist_songs = [s for s in songs_metadata.values() if s.get("artist_id") == song.get("artist_id")]
     if artist_songs:
         avg_playlist_points = sum(len(s.get("playlists", [])) for s in artist_songs) / len(artist_songs)
@@ -195,18 +257,21 @@ def compute_artist_hype(song):
     if len(measurements) >= 2:
         sorted_ms = sorted(measurements, key=lambda m: m.get("timestamp"))
         previous = sorted_ms[-2]
-        prev_base = (previous.get("streams", 0) * 14.8) + (previous.get("artist_pop", 0) * 8.75)
+        prev_streams = previous.get("streams", 0)
+        prev_pop = previous.get("artist_pop", 0)
+        prev_base = (prev_streams * 14.8) + (prev_pop * 8.75)
         growth = base - prev_base
         if abs(growth) < EPSILON:
-            raw = 30
+            raw = (streams * 14.8) + (artist_pop * 8.75)
         else:
             raw = base + growth
         K = 100
     else:
-        raw = 30
-        K = 100
+        raw = (streams * 14.8) + (artist_pop * 8.75)
+        K = 1000
     hype = 100 * raw / (raw + K) if raw >= 0 else 0
     return max(0, min(hype, 100))
+
 def update_hype_score_in_measurement(measurement_id, hype_score, retries=5):
     url = f"{notion_page_endpoint}/{measurement_id}"
     payload = {
@@ -456,11 +521,12 @@ def update_song_measurements_relation(page_id, new_measurement_id, retries=3):
         if patch_resp.status_code == 200:
             return
         elif patch_resp.status_code == 409:
+            st.warning(f"Conflict beim Update von Seite {page_id}, Versuch {attempt+1}/3. Warte 1 Sekunde.")
             time.sleep(1)
             continue
         else:
             patch_resp.raise_for_status()
-    st.warning(f"Konnte Measurements für Seite {page_id} nach {retries} Versuchen nicht aktualisieren.")
+    st.warning(f"Konnte Measurements für Seite {page_id} nach 3 Versuchen nicht aktualisieren.")
 
 ######################################
 # Fill Song Measurements: Nur Songs updaten, die nicht in den letzten 2 Stunden editiert wurden
@@ -486,9 +552,29 @@ def fill_song_measurements():
             details = update_song_data(song, spotify_token)
             new_meas_id = create_measurement_entry(song, details)
             update_song_measurements_relation(song["page_id"], new_meas_id)
-            # Berechne den Song Hype Score – falls Vergleichsdaten vorliegen, wird der Zuwachs berücksichtigt,
-            # sonst wird nur der Basiswert genutzt.
-            hype = compute_song_hype({"latest_measurement": details, "playlists": song.get("playlists", [])})
+            # Berechne den Song Hype Score:
+            # Falls Vergleichsdaten vorhanden und sich unterscheiden, wird der Zuwachs einbezogen.
+            # Andernfalls wird ein fester initialer Score auf Basis von Streams und Popularity genutzt.
+            measurements = song.get("measurements", [])
+            EPSILON = 5
+            if len(measurements) >= 2:
+                sorted_ms = sorted(measurements, key=lambda m: m.get("timestamp"))
+                previous = sorted_ms[-2]
+                prev_streams = previous.get("streams", 0)
+                prev_pop = previous.get("song_pop", 0)
+                prev_base = (prev_streams * 14.8) + (prev_pop * 8.75)
+                current_base = (details.get("streams", 0) * 14.8) + (details.get("song_pop", 0) * 8.75)
+                growth = current_base - prev_base
+                if abs(growth) < EPSILON:
+                    raw = (details.get("streams", 0) * 14.8) + (details.get("song_pop", 0) * 8.75)
+                else:
+                    raw = current_base + growth
+                K = 100
+            else:
+                raw = (details.get("streams", 0) * 14.8) + (details.get("song_pop", 0) * 8.75)
+                K = 1000
+            hype = 100 * raw / (raw + K) if raw >= 0 else 0
+            # Update Hype Score in Notion:
             if not update_hype_score_in_measurement(new_meas_id, hype):
                 log(f"Song '{song.get('track_name')}' wird übersprungen aufgrund von Hype-Score-Update-Fehler.")
                 i += 1
@@ -503,7 +589,7 @@ def fill_song_measurements():
     return messages
 
 ######################################
-# Hilfsfunktion: song_exists_in_notio (sollte song_exists_in_notion heißen)
+# Hilfsfunktion: song_exists_in_notion
 ######################################
 def song_exists_in_notion(track_id):
     payload = {
@@ -639,7 +725,7 @@ if st.sidebar.button("Get New Music", key="get_new_music_button"):
         log(f"Spotify Access Token: {spotify_token}")
         all_songs = []
         for pid in st.secrets["spotify"]["playlist_ids"]:
-            songs = get_playlist_data(pid, spotify_token).get("tracks", {}).get("items", [])
+            songs = requests.get(f"https://api.spotify.com/v1/playlists/{pid}", headers={"Authorization": f"Bearer {spotify_token}"}).json().get("tracks", {}).get("items", [])
             for item in songs:
                 track = item.get("track")
                 if track:
@@ -651,7 +737,7 @@ if st.sidebar.button("Get New Music", key="get_new_music_button"):
                     log(f"{song.get('name')} existiert bereits.")
                 else:
                     log(f"{song.get('name')} wird erstellt.")
-                    # Hier sollte deine Funktion zum Erstellen in Notion aufgerufen werden
+                    # Hier sollte die Funktion zum Erstellen in Notion aufgerufen werden
             else:
                 log(f"{song.get('name')} hat keine Track ID und wird übersprungen.")
     run_get_new_music()
