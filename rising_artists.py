@@ -154,13 +154,14 @@ def compute_artist_hype(song):
     M_scaled = min(math.log10(monthly + 1) / 6 * 100, 100)
     return 0.4 * A + 0.3 * F_scaled + 0.3 * M_scaled
 
-def update_hype_score_in_measurement(measurement_id, hype_score, retries=3):
+def update_hype_score_in_measurement(measurement_id, hype_score, retries=5):
     url = f"{notion_page_endpoint}/{measurement_id}"
     payload = {
-         "properties": {
-              "Hype Score": {"number": hype_score}
-         }
+        "properties": {
+            "Hype Score": {"number": hype_score}
+        }
     }
+    backoff = 1  # Start mit 1 Sekunde Wartezeit
     for attempt in range(retries):
         try:
             response = requests.patch(url, headers=notion_headers, json=payload)
@@ -168,11 +169,13 @@ def update_hype_score_in_measurement(measurement_id, hype_score, retries=3):
             return
         except requests.HTTPError as e:
             if response.status_code == 409:
-                time.sleep(1)  # Kurze Pause vor erneutem Versuch
+                st.warning(f"Konflikt beim Update {measurement_id}. Versuch {attempt+1} von {retries}. Warte {backoff} Sekunden.")
+                time.sleep(backoff)
+                backoff *= 2  # Exponentielles Backoff
                 continue
             else:
                 raise e
-    st.warning(f"Konnte Hype Score für {measurement_id} nach {retries} Versuchen nicht aktualisieren.")
+    st.error(f"Update des Hype Scores für {measurement_id} nach {retries} Versuchen fehlgeschlagen.")
 
 ######################################
 # Sidebar: Suchfeld, Filter, Log & Buttons
@@ -197,8 +200,19 @@ if "log_messages" not in st.session_state:
     st.session_state.log_messages = []
 
 def log(msg):
+    # Füge die neue Nachricht zu den Session-Logs hinzu
     st.session_state.log_messages.append(f"{datetime.datetime.now().strftime('%H:%M:%S')}: {msg}")
-    st.sidebar.text_area("Log", "\n".join(st.session_state.log_messages), height=200)
+    # Verbinde alle Lognachrichten in einen einzigen String
+    log_content = "\n".join(st.session_state.log_messages)
+    # Erzeuge einen HTML-Container mit fester Höhe und Scrollbalken
+    st.sidebar.markdown(
+        f"""
+        <div style="height:200px; overflow-y: scroll; border:1px solid #ccc; padding: 5px; background-color:#f9f9f9;">
+            <pre style="white-space: pre-wrap; margin:0;">{log_content}</pre>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
 def show_progress(current, total, info=""):
     progress = current / total
