@@ -155,11 +155,8 @@ def compute_song_hype(song):
     latest = song.get("latest_measurement", {})
     streams = latest.get("streams", 0)
     song_pop = latest.get("song_pop", 0)
-    # Falls Playlist-Daten vorhanden: Anzahl + (Summe der Follower / SCALE)
-    if song.get("playlists"):
-        playlist_points = len(song["playlists"]) + (sum(int(pl.get("followers", 0)) for pl in song["playlists"]) / SCALE)
-    else:
-        playlist_points = 0
+    # Playlist-Punkte: Nur Anzahl der Playlisten, in denen der Song auftaucht.
+    playlist_points = len(song.get("playlists", []))
     base = (streams * 14.8) + (song_pop * 8.75) + (playlist_points * 0.92)
     measurements = song.get("measurements", [])
     if len(measurements) >= 2:
@@ -168,21 +165,22 @@ def compute_song_hype(song):
         prev_base = (previous.get("streams", 0) * 14.8) + (previous.get("song_pop", 0) * 8.75)
         growth = base - prev_base
         raw = base + growth
-        K = 100
+        K = 100  # K-Faktor für Vergleichsdaten
     else:
         raw = base
         K = 1000  # Höherer K-Wert reduziert den initialen Score
     hype = 100 * raw / (raw + K) if raw >= 0 else 0
     return max(0, min(hype, 100))
 
+
 def compute_artist_hype(song):
     latest = song.get("latest_measurement", {})
     streams = latest.get("streams", 0)
     artist_pop = latest.get("artist_pop", 0)
+    # Berechne den Durchschnitt der Playlist-Punkte (nur Anzahl der Playlisten) aller Songs des Künstlers
     artist_songs = [s for s in songs_metadata.values() if s.get("artist_id") == song.get("artist_id")]
     if artist_songs:
-        avg_playlist_points = sum(len(s.get("playlists", [])) + (sum(int(pl.get("followers", 0)) for pl in s.get("playlists", [])) / SCALE)
-                                 for s in artist_songs) / len(artist_songs)
+        avg_playlist_points = sum(len(s.get("playlists", [])) for s in artist_songs) / len(artist_songs)
     else:
         avg_playlist_points = 0
     base = (streams * 14.8) + (artist_pop * 8.75) + (avg_playlist_points * 0.92)
