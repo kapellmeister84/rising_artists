@@ -53,7 +53,7 @@ def get_measurement_details(measurement_id):
     response.raise_for_status()
     data = response.json()
     props = data.get("properties", {})
-    # created_time von Notion als Timestamp nutzen
+    # Notions created_time als Timestamp
     timestamp = data.get("created_time", "")
     return {
         "timestamp": timestamp,
@@ -157,11 +157,11 @@ def compute_artist_hype(song):
 def update_hype_score_in_measurement(measurement_id, hype_score, retries=5):
     url = f"{notion_page_endpoint}/{measurement_id}"
     payload = {
-        "properties": {
-            "Hype Score": {"number": hype_score}
-        }
+         "properties": {
+              "Hype Score": {"number": hype_score}
+         }
     }
-    backoff = 1  # Start mit 1 Sekunde Wartezeit
+    backoff = 1
     for attempt in range(retries):
         try:
             response = requests.patch(url, headers=notion_headers, json=payload)
@@ -169,9 +169,9 @@ def update_hype_score_in_measurement(measurement_id, hype_score, retries=5):
             return
         except requests.HTTPError as e:
             if response.status_code == 409:
-                st.warning(f"Konflikt beim Update {measurement_id}. Versuch {attempt+1} von {retries}. Warte {backoff} Sekunden.")
+                st.warning(f"Conflict beim Update {measurement_id}, Versuch {attempt+1}/{retries}. Warte {backoff} Sekunde(n).")
                 time.sleep(backoff)
-                backoff *= 2  # Exponentielles Backoff
+                backoff *= 2
                 continue
             else:
                 raise e
@@ -192,7 +192,6 @@ stream_range = st.sidebar.slider("Stream Count Range", 0, 20000000, (0, 20000000
 hype_range = st.sidebar.slider("Hype Score Range", 0, 100, (0, 100))
 sort_option = st.sidebar.selectbox("Sort by", ["Hype Score", "Popularity", "Streams", "Release Date"])
 
-# Confirm Filters Button (um auch ohne Suchbegriff zu suchen)
 confirm_filters = st.sidebar.button("Confirm Filters", key="confirm_filters_button")
 
 st.sidebar.markdown("---")
@@ -200,11 +199,8 @@ if "log_messages" not in st.session_state:
     st.session_state.log_messages = []
 
 def log(msg):
-    # Füge die neue Nachricht zu den Session-Logs hinzu
     st.session_state.log_messages.append(f"{datetime.datetime.now().strftime('%H:%M:%S')}: {msg}")
-    # Verbinde alle Lognachrichten in einen einzigen String
     log_content = "\n".join(st.session_state.log_messages)
-    # Erzeuge einen HTML-Container mit fester Höhe und Scrollbalken
     st.sidebar.markdown(
         f"""
         <div style="height:200px; overflow-y: scroll; border:1px solid #ccc; padding: 5px; background-color:#f9f9f9;">
@@ -292,8 +288,16 @@ def update_song_data(song, token):
     response = requests.get(url, headers=headers)
     if response.status_code == 200:
         data = response.json()
+        # Country Code: Suche bevorzugt nach DE, AT oder CH
+        preferred_markets = {"DE", "AT", "CH"}
         available_markets = data.get("album", {}).get("available_markets", [])
-        country_code = available_markets[0] if available_markets else ""
+        country_code = ""
+        for market in available_markets:
+            if market in preferred_markets:
+                country_code = market
+                break
+        if not country_code and available_markets:
+            country_code = available_markets[0]
         song_pop = get_spotify_popularity(song["track_id"], token)
         artists = data.get("artists", [])
         artist_id = artists[0].get("id") if artists and artists[0].get("id") else ""
@@ -382,30 +386,32 @@ def fill_song_measurements():
     total = len(songs_metadata)
     progress_bar = st.sidebar.progress(0)
     i = 0
+    now = datetime.datetime.now(datetime.timezone.utc)
     for key, song in songs_metadata.items():
-        if song.get("track_id"):
+        # Update nur, wenn keine Messung in den letzten 2 Stunden vorliegt
+        update_needed = True
+        if "latest_measurement" in song and song["latest_measurement"].get("timestamp"):
+            try:
+                last_ts = datetime.datetime.fromisoformat(song["latest_measurement"]["timestamp"].replace("Z", "+00:00"))
+                if (now - last_ts).total_seconds() < 2 * 3600:
+                    update_needed = False
+                    log(f"Überspringe '{song.get('track_name')}' – Messung vor weniger als 2h.")
+            except Exception as e:
+                log(f"Fehler bei der Zeitkonvertierung für '{song.get('track_name')}': {e}")
+        if update_needed and song.get("track_id"):
             details = update_song_data(song, spotify_token)
             new_meas_id = create_measurement_entry(song, details)
             update_song_measurements_relation(song["page_id"], new_meas_id)
+            # Berechne Hype Score basierend auf den neuesten Messdaten und update Notion
             hype = compute_song_hype({"latest_measurement": details})
             update_hype_score_in_measurement(new_meas_id, hype)
             song["latest_measurement"] = details
             msg = f"'{song.get('track_name')}' aktualisiert (Hype: {hype:.1f})"
             messages.append(msg)
-            st.sidebar.write(msg)
+            log(msg)
         i += 1
         progress_bar.progress(i / total)
     return messages
-
-def update_hype_score_in_measurement(measurement_id, hype_score):
-    url = f"{notion_page_endpoint}/{measurement_id}"
-    payload = {
-         "properties": {
-              "Hype Score": {"number": hype_score}
-         }
-    }
-    response = requests.patch(url, headers=notion_headers, json=payload)
-    response.raise_for_status()
 
 ######################################
 # Hilfsfunktion: song_exists_in_notion
@@ -583,10 +589,10 @@ if st.sidebar.button("Get New Music", key="get_new_music_button"):
                 if song_exists_in_notion(song["track_id"]):
                     log(f"{song['song_name']} von {song['artist_name']} existiert bereits.")
                 else:
-                    log(f"{song['song_name']} von {song['artist_name']} wird erstellt.")
+                    log(f"{song['track_name']} von {song['artist_name']} wird erstellt.")
                     create_notion_page(song)
             else:
-                log(f"{song['song_name']} hat keine Track ID und wird übersprungen.")
+                log(f"{song['track_name']} hat keine Track ID und wird übersprungen.")
     run_get_new_music()
     log("Get New Music abgeschlossen. Bitte Seite neu laden, um die aktualisierten Daten zu sehen.")
 
@@ -656,7 +662,7 @@ def apply_filters_and_sort(results):
     final = {s.get("track_id") or s.get("page_id"): s for s in sorted_results}
     return final
 
-# Suchergebnisse auslösen: Entweder "Start Search" oder "Confirm Filters"
+# Suche ausführen: Entweder "Start Search" oder "Confirm Filters"
 if start_search or confirm_filters:
     if search_query:
         results_found = search_songs(search_query)
