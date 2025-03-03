@@ -585,6 +585,10 @@ def song_exists_in_notion(track_id):
 ######################################
 # Hauptbereich: Suchergebnisse anzeigen (Filter & Sortierung)
 ######################################
+
+st.title("ARTIST SCOUT 1.0b")
+st.header("Top 10 songs to watch")
+
 def search_songs(query):
     query_lower = query.lower()
     results = {}
