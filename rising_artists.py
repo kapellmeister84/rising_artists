@@ -12,10 +12,10 @@ import math
 from utils import set_background, set_dark_mode
 
 st.set_page_config(layout="wide")
-set_dark_mode()   # Setzt den dunklen Modus via CSS aus utils.py
+set_dark_mode()   # Setzt den dunklen Modus via utils.py
 set_background("https://wallpapershome.com/images/pages/pic_h/26334.jpg")
 
-# CSS: Suchfeld und Buttons in der Sidebar schwarz; Links in Weiß ohne Unterstreichung; Artist-Karte mit weißem Rahmen
+# CSS-Anpassungen: Suchfeld und Buttons in der Sidebar schwarz; Links in Weiß ohne Unterstreichung; Artist-Karte mit weißem Rahmen
 st.markdown(
     """
     <style>
@@ -144,18 +144,18 @@ def get_songs_metadata():
 songs_metadata = get_songs_metadata()
 
 ######################################
-# Neue Hype Score Berechnung (mit Einbeziehung der Playlist-Follower)
+# Neue Hype Score Berechnung (unter Einbeziehung der Playlist-Follower)
 ######################################
-# Wir definieren für einen Song:
-# Playlist Points = (Anzahl der Playlisten) + (Summe der Follower der Playlisten / SCALE)
-# Für den Artist: Durchschnitt der Playlist Points aller Songs des Künstlers.
-SCALE = 1000000  # Beispiel-Skalierungsfaktor für Followerzahlen
+# Wir definieren:
+# Playlist Points (Song) = (Anzahl der Playlisten) + (Summe der Follower der Playlisten / SCALE)
+# Playlist Points (Artist) = Durchschnitt über alle Songs des Künstlers
+SCALE = 1000000  # Skalierungsfaktor für die Followerzahlen
 
 def compute_song_hype(song):
     latest = song.get("latest_measurement", {})
     streams = latest.get("streams", 0)
     song_pop = latest.get("song_pop", 0)
-    # Playlist-Punkte: Anzahl der Playlisten + (Summe der Follower / SCALE)
+    # Falls Playlist-Daten vorhanden: Anzahl + (Summe der Follower / SCALE)
     if song.get("playlists"):
         playlist_points = len(song["playlists"]) + (sum(int(pl.get("followers", 0)) for pl in song["playlists"]) / SCALE)
     else:
@@ -167,19 +167,18 @@ def compute_song_hype(song):
         previous = sorted_ms[-2]
         prev_base = (previous.get("streams", 0) * 14.8) + (previous.get("song_pop", 0) * 8.75)
         growth = base - prev_base
-        value = base + growth
+        raw = base + growth
+        K = 100
     else:
-        value = base
-    # Normiere den Score in den Bereich 0 bis 100
-    K = 100
-    hype = 100 * value / (value + K) if value >= 0 else 0
+        raw = base
+        K = 1000  # Höherer K-Wert reduziert den initialen Score
+    hype = 100 * raw / (raw + K) if raw >= 0 else 0
     return max(0, min(hype, 100))
 
 def compute_artist_hype(song):
     latest = song.get("latest_measurement", {})
     streams = latest.get("streams", 0)
     artist_pop = latest.get("artist_pop", 0)
-    # Berechne den Durchschnitt der Playlist-Punkte aller Songs des Künstlers
     artist_songs = [s for s in songs_metadata.values() if s.get("artist_id") == song.get("artist_id")]
     if artist_songs:
         avg_playlist_points = sum(len(s.get("playlists", [])) + (sum(int(pl.get("followers", 0)) for pl in s.get("playlists", [])) / SCALE)
@@ -193,11 +192,12 @@ def compute_artist_hype(song):
         previous = sorted_ms[-2]
         prev_base = (previous.get("streams", 0) * 14.8) + (previous.get("artist_pop", 0) * 8.75)
         growth = base - prev_base
-        value = base + growth
+        raw = base + growth
+        K = 100
     else:
-        value = base
-    K = 100
-    hype = 100 * value / (value + K) if value >= 0 else 0
+        raw = base
+        K = 1000
+    hype = 100 * raw / (raw + K) if raw >= 0 else 0
     return max(0, min(hype, 100))
 
 def update_hype_score_in_measurement(measurement_id, hype_score, retries=5):
@@ -225,7 +225,7 @@ def update_hype_score_in_measurement(measurement_id, hype_score, retries=5):
     return False
 
 ######################################
-# Neue Funktion: Artist History-Figur (feste Höhe = 80px)
+# Graphen generieren
 ######################################
 def get_artist_history_figure(measurements, height=80):
     if not measurements:
@@ -240,9 +240,6 @@ def get_artist_history_figure(measurements, height=80):
         return fig
     return None
 
-######################################
-# Neue Funktion: Song History-Figur (feste Höhe = 150px)
-######################################
 def get_song_history_figure(measurements, height=150):
     if not measurements:
         return None
@@ -482,7 +479,8 @@ def fill_song_measurements():
             details = update_song_data(song, spotify_token)
             new_meas_id = create_measurement_entry(song, details)
             update_song_measurements_relation(song["page_id"], new_meas_id)
-            # Berechne den Song Hype Score (inklusive Playlist-Follower)
+            # Berechne den Song Hype Score – falls Vergleichsdaten vorliegen, wird der Zuwachs berücksichtigt,
+            # sonst wird nur der Basiswert genutzt.
             hype = compute_song_hype({"latest_measurement": details, "playlists": song.get("playlists", [])})
             if not update_hype_score_in_measurement(new_meas_id, hype):
                 log(f"Song '{song.get('track_name')}' wird übersprungen aufgrund von Hype-Score-Update-Fehler.")
@@ -498,7 +496,7 @@ def fill_song_measurements():
     return messages
 
 ######################################
-# Hilfsfunktion: song_exists_in_notion
+# Hilfsfunktion: song_exists_in_notio (sollte song_exists_in_notion heißen)
 ######################################
 def song_exists_in_notion(track_id):
     payload = {
@@ -646,7 +644,7 @@ if st.sidebar.button("Get New Music", key="get_new_music_button"):
                     log(f"{song.get('name')} existiert bereits.")
                 else:
                     log(f"{song.get('name')} wird erstellt.")
-                    # Hier sollte die Funktion zum Erstellen in Notion aufgerufen werden, z. B. create_notion_page(song)
+                    # Hier sollte deine Funktion zum Erstellen in Notion aufgerufen werden
             else:
                 log(f"{song.get('name')} hat keine Track ID und wird übersprungen.")
     run_get_new_music()
