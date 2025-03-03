@@ -51,11 +51,11 @@ def set_dark_mode():
     }
     /* Eingabefelder in der Sidebar: dunkelgraue Schrift */
     [data-testid="stSidebar"] input {
-        color: #555555 !important;
+        color: #607B8B !important;
     }
     /* Buttons in der Sidebar: dunkelgraue Schrift */
     [data-testid="stSidebar"] button {
-        color: #555555 !important;
+        color: #607B8B !important;
     }
     </style>
     """
