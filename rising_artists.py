@@ -155,20 +155,26 @@ def compute_song_hype(song):
     latest = song.get("latest_measurement", {})
     streams = latest.get("streams", 0)
     song_pop = latest.get("song_pop", 0)
-    # Playlist-Punkte: Nur Anzahl der Playlisten, in denen der Song auftaucht.
+    # Playlist-Punkte: Nur Anzahl der Playlisten, in denen der Song gelistet ist.
     playlist_points = len(song.get("playlists", []))
     base = (streams * 14.8) + (song_pop * 8.75) + (playlist_points * 0.92)
     measurements = song.get("measurements", [])
+    # Schwellwert, ab dem Unterschiede als signifikant gelten (anpassbar)
+    EPSILON = 5  
     if len(measurements) >= 2:
         sorted_ms = sorted(measurements, key=lambda m: m.get("timestamp"))
         previous = sorted_ms[-2]
         prev_base = (previous.get("streams", 0) * 14.8) + (previous.get("song_pop", 0) * 8.75)
         growth = base - prev_base
-        raw = base + growth
-        K = 100  # K-Faktor für Vergleichsdaten
+        # Falls der Unterschied zu gering ist, wird ein fester Initialwert verwendet
+        if abs(growth) < EPSILON:
+            raw = 30
+        else:
+            raw = base + growth
+        K = 100
     else:
-        raw = base
-        K = 1000  # Höherer K-Wert reduziert den initialen Score
+        raw = 30  # Fester Startwert, wenn keine Vergleichsdaten vorhanden sind
+        K = 100
     hype = 100 * raw / (raw + K) if raw >= 0 else 0
     return max(0, min(hype, 100))
 
@@ -177,7 +183,7 @@ def compute_artist_hype(song):
     latest = song.get("latest_measurement", {})
     streams = latest.get("streams", 0)
     artist_pop = latest.get("artist_pop", 0)
-    # Berechne den Durchschnitt der Playlist-Punkte (nur Anzahl der Playlisten) aller Songs des Künstlers
+    # Berechne den Durchschnitt der Playlist-Punkte aller Songs des Künstlers
     artist_songs = [s for s in songs_metadata.values() if s.get("artist_id") == song.get("artist_id")]
     if artist_songs:
         avg_playlist_points = sum(len(s.get("playlists", [])) for s in artist_songs) / len(artist_songs)
@@ -185,19 +191,22 @@ def compute_artist_hype(song):
         avg_playlist_points = 0
     base = (streams * 14.8) + (artist_pop * 8.75) + (avg_playlist_points * 0.92)
     measurements = song.get("measurements", [])
+    EPSILON = 5
     if len(measurements) >= 2:
         sorted_ms = sorted(measurements, key=lambda m: m.get("timestamp"))
         previous = sorted_ms[-2]
         prev_base = (previous.get("streams", 0) * 14.8) + (previous.get("artist_pop", 0) * 8.75)
         growth = base - prev_base
-        raw = base + growth
+        if abs(growth) < EPSILON:
+            raw = 30
+        else:
+            raw = base + growth
         K = 100
     else:
-        raw = base
-        K = 1000
+        raw = 30
+        K = 100
     hype = 100 * raw / (raw + K) if raw >= 0 else 0
     return max(0, min(hype, 100))
-
 def update_hype_score_in_measurement(measurement_id, hype_score, retries=5):
     url = f"{notion_page_endpoint}/{measurement_id}"
     payload = {
