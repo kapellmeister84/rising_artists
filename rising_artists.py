@@ -833,6 +833,7 @@ if st.session_state.recent_searches:
     cols = st.columns(5)
     for idx, tile in enumerate(st.session_state.recent_searches):
         with cols[idx % 5]:
+            # Hier keine target-Attribut – Klick aktualisiert den Suchbegriff in derselben Instanz
             link = f"?search_query={tile['artist_name']}"
             st.markdown(f"""
             <a href="{link}" style="text-decoration: none; color: inherit;">
