@@ -15,16 +15,16 @@ st.set_page_config(layout="wide")
 set_dark_mode()
 set_background("https://wallpapershome.com/images/pages/pic_h/26334.jpg")
 
-# CSS-Anpassungen: Suchfeld und Buttons in dunklem Grau, Links ohne Unterstreichung und in Weiß, Artist-Karten mit weißem Rahmen
+# CSS-Anpassungen: Suchfeld und Buttons in schwarz, Links in weiß ohne Unterstreichung, Artist-Karte mit weißem Rahmen
 st.markdown(
     """
     <style>
     .stTextInput>div>div>input {
         background-color: #ffffff;
-        color: #333333;
+        color: #000000;
     }
     .stButton button {
-        color: #333333 !important;
+        color: #000000 !important;
     }
     a {
         color: #ffffff;
@@ -60,7 +60,6 @@ def get_measurement_details(measurement_id):
     response.raise_for_status()
     data = response.json()
     props = data.get("properties", {})
-    # Nutze den automatisch gesetzten created_time als Timestamp
     timestamp = data.get("created_time", "")
     return {
         "timestamp": timestamp,
@@ -128,7 +127,7 @@ def get_songs_metadata():
                 "release_date": release_date,
                 "country_code": country_code,
                 "measurements_ids": measurements_ids,
-                "last_edited": last_edited  # Letzte Bearbeitung
+                "last_edited": last_edited
             }
         for measurement_id, future in measurement_futures.items():
             try:
@@ -145,23 +144,40 @@ def get_songs_metadata():
 songs_metadata = get_songs_metadata()
 
 ######################################
-# Hype Score Berechnung (basierend auf der neuesten Messung)
+# Neue Hype Score Berechnung
 ######################################
+# Für Songs: Basis = (Streams * 14.8) + (Song Popularity * 8.75) + (Playlist Points * 0.92)
+# Falls Vergleichsdaten vorhanden, wird der Zuwachs (Differenz zur vorangegangenen Messung) addiert.
 def compute_song_hype(song):
-    m = song.get("latest_measurement", {})
-    P = m.get("song_pop", 0)
-    streams = m.get("streams", 0)
-    S_scaled = min(math.log10(streams + 1) / 4 * 100, 100)
-    return 0.4 * P + 0.6 * S_scaled
+    latest = song.get("latest_measurement", {})
+    # Berechne Playlist-Punkte aus der Anzahl der Playlists (falls vorhanden)
+    playlist_points = len(song.get("playlists", [])) if song.get("playlists") else 0
+    base = (latest.get("streams", 0) * 14.8) + (latest.get("song_pop", 0) * 8.75) + (playlist_points * 0.92)
+    measurements = song.get("measurements", [])
+    if len(measurements) >= 2:
+        # Sortiere Messungen nach Timestamp
+        sorted_ms = sorted(measurements, key=lambda m: m.get("timestamp"))
+        previous = sorted_ms[-2]
+        prev_base = (previous.get("streams", 0) * 14.8) + (previous.get("song_pop", 0) * 8.75)
+        growth = base - prev_base
+        return base + growth
+    else:
+        return base
 
+# Für Artists: Basis = (Streams * 14.8) + (Artist Popularity * 8.75) + (Playlist Points * 0.92)
+# Hier nutzen wir als Playlist-Punkte einen Durchschnittswert über alle Songs des Artists.
 def compute_artist_hype(song):
-    m = song.get("latest_measurement", {})
-    A = m.get("artist_pop", 0)
-    followers = m.get("artist_followers", 0)
-    monthly = m.get("monthly_listeners", 0)
-    F_scaled = min(math.log10(followers + 1) / 6 * 100, 100)
-    M_scaled = min(math.log10(monthly + 1) / 6 * 100, 100)
-    return 0.4 * A + 0.3 * F_scaled + 0.3 * M_scaled
+    latest = song.get("latest_measurement", {})
+    base = (latest.get("streams", 0) * 14.8) + (latest.get("artist_pop", 0) * 8.75)
+    measurements = song.get("measurements", [])
+    if len(measurements) >= 2:
+        sorted_ms = sorted(measurements, key=lambda m: m.get("timestamp"))
+        previous = sorted_ms[-2]
+        prev_base = (previous.get("streams", 0) * 14.8) + (previous.get("artist_pop", 0) * 8.75)
+        growth = base - prev_base
+        return base + growth
+    else:
+        return base
 
 def update_hype_score_in_measurement(measurement_id, hype_score, retries=5):
     url = f"{notion_page_endpoint}/{measurement_id}"
@@ -188,30 +204,49 @@ def update_hype_score_in_measurement(measurement_id, hype_score, retries=5):
     return False
 
 ######################################
-# Sidebar: Suchfeld, Filter, Log & Buttons
+# Neue Funktion: Artist History-Figur generieren (feste Höhe = 80px)
 ######################################
-st.sidebar.title("Search")
-search_query = st.sidebar.text_input("Search by artist or song:")
+def get_artist_history_figure(measurements, height=80):
+    if not measurements:
+        return None
+    df = pd.DataFrame(measurements)
+    if "timestamp" in df.columns and not df["timestamp"].isnull().all():
+        df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+        fig = px.line(df, x="timestamp", y=["artist_pop", "monthly_listeners", "artist_followers"],
+                      labels={"timestamp": "Date", "value": "Value", "variable": "Metric"},
+                      title="")
+        fig.update_layout(height=height, margin=dict(l=0, r=0, t=0, b=0))
+        return fig
+    return None
 
-# Direkt unter dem Suchfeld: Start Search Button
-start_search = st.sidebar.button("Start Search", key="start_search_button")
+######################################
+# Neue Funktion: Song History-Figur generieren (feste Höhe = 150px)
+######################################
+def get_song_history_figure(measurements, height=150):
+    if not measurements:
+        return None
+    df = pd.DataFrame(measurements)
+    if "timestamp" in df.columns and not df["timestamp"].isnull().all():
+        df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+        fig = px.line(df, x="timestamp", y=["song_pop", "streams"],
+                      labels={"timestamp": "Date", "value": "Value", "variable": "Metric"},
+                      title="")
+        fig.update_layout(height=height, margin=dict(l=0, r=0, t=0, b=0))
+        return fig
+    return None
 
-st.sidebar.markdown("## Filters")
-pop_range = st.sidebar.slider("Popularity Range", 0, 100, (0, 100))
-stream_range = st.sidebar.slider("Stream Count Range", 0, 20000000, (0, 20000000), step=100000)
-hype_range = st.sidebar.slider("Hype Score Range", 0, 100, (0, 100))
-sort_option = st.sidebar.selectbox("Sort by", ["Hype Score", "Popularity", "Streams", "Release Date"])
-
-confirm_filters = st.sidebar.button("Confirm Filters", key="confirm_filters_button")
-
-st.sidebar.markdown("---")
-if "log_messages" not in st.session_state:
-    st.session_state.log_messages = []
+######################################
+# Log- und Fortschrittsanzeige im Hauptbereich
+######################################
+log_container = st.empty()
+progress_container = st.empty()
 
 def log(msg):
+    if "log_messages" not in st.session_state:
+        st.session_state.log_messages = []
     st.session_state.log_messages.append(f"{datetime.datetime.now().strftime('%H:%M:%S')}: {msg}")
     log_content = "\n".join(st.session_state.log_messages)
-    st.sidebar.markdown(
+    log_container.markdown(
         f"""
         <div style="height:200px; overflow-y: scroll; border:1px solid #ccc; padding: 5px; background-color:#f9f9f9;">
             <pre style="white-space: pre-wrap; margin:0;">{log_content}</pre>
@@ -222,9 +257,22 @@ def log(msg):
 
 def show_progress(current, total, info=""):
     progress = current / total
-    pb = st.sidebar.progress(progress)
-    st.sidebar.write(info)
-    return pb
+    progress_container.progress(progress)
+    progress_container.write(info)
+
+######################################
+# Sidebar: Suchfeld, Filter, Buttons (Schrift in Sidebar = schwarz)
+######################################
+st.sidebar.title("Search")
+search_query = st.sidebar.text_input("Search by artist or song:")
+start_search = st.sidebar.button("Start Search", key="start_search_button")
+
+st.sidebar.markdown("## Filters")
+pop_range = st.sidebar.slider("Popularity Range", 0, 100, (0, 100))
+stream_range = st.sidebar.slider("Stream Count Range", 0, 20000000, (0, 20000000), step=100000)
+hype_range = st.sidebar.slider("Hype Score Range", 0, 100, (0, 100))
+sort_option = st.sidebar.selectbox("Sort by", ["Hype Score", "Popularity", "Streams", "Release Date"])
+confirm_filters = st.sidebar.button("Confirm Filters", key="confirm_filters_button")
 
 ######################################
 # Spotify-Konfiguration
@@ -298,7 +346,6 @@ def update_song_data(song, token):
     response = requests.get(url, headers=headers)
     if response.status_code == 200:
         data = response.json()
-        # Country Code: Suche bevorzugt nach DE, AT oder CH
         preferred_markets = {"DE", "AT", "CH"}
         available_markets = data.get("album", {}).get("available_markets", [])
         country_code = ""
@@ -349,7 +396,6 @@ def create_measurement_entry(song, details):
         "parent": {"database_id": measurements_db_id},
         "properties": {
             "Name": {"title": [{"text": {"content": f"Measurement {now}"}}]},
-            # "date created" wird automatisch von Notion gesetzt
             "Song": {"relation": [{"id": song["page_id"]}]},
             "Song Pop": {"number": int(details.get("song_pop") or 0)},
             "Artist Pop": {"number": int(details.get("artist_pop") or 0)},
@@ -398,7 +444,7 @@ def fill_song_measurements():
     spotify_token = get_spotify_token()
     messages = []
     total = len(songs_metadata)
-    progress_bar = st.sidebar.progress(0)
+    progress_container.empty()
     i = 0
     now = datetime.datetime.now(datetime.timezone.utc)
     for key, song in songs_metadata.items():
@@ -415,18 +461,19 @@ def fill_song_measurements():
             details = update_song_data(song, spotify_token)
             new_meas_id = create_measurement_entry(song, details)
             update_song_measurements_relation(song["page_id"], new_meas_id)
-            hype = compute_song_hype({"latest_measurement": details})
+            # Berechne Song Hype Score unter Berücksichtigung des Zuwachses, falls Vergleichsdaten vorliegen
+            hype = compute_song_hype({"latest_measurement": details, "playlists": song.get("playlists", [])})
             if not update_hype_score_in_measurement(new_meas_id, hype):
                 log(f"Song '{song.get('track_name')}' wird übersprungen aufgrund von Hype-Score-Update-Fehler.")
                 i += 1
-                progress_bar.progress(i / total)
                 continue
             song["latest_measurement"] = details
             msg = f"'{song.get('track_name')}' aktualisiert (Hype: {hype:.1f})"
             messages.append(msg)
             log(msg)
         i += 1
-        progress_bar.progress(i / total)
+        show_progress(i, total, f"Aktualisiere {i}/{total} Songs")
+    progress_container.empty()
     return messages
 
 ######################################
@@ -460,35 +507,33 @@ def group_results_by_artist(results):
     return grouped
 
 ######################################
-# Graphen anzeigen
+# Graphen generieren
 ######################################
-def display_artist_history(measurements):
+def get_artist_history_figure(measurements, height=80):
     if not measurements:
-        st.write("Keine historischen Daten vorhanden.")
-        return
+        return None
     df = pd.DataFrame(measurements)
     if "timestamp" in df.columns and not df["timestamp"].isnull().all():
         df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
         fig = px.line(df, x="timestamp", y=["artist_pop", "monthly_listeners", "artist_followers"],
                       labels={"timestamp": "Date", "value": "Value", "variable": "Metric"},
-                      title="Artist History")
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.write("Keine Datum-Informationen in den Messdaten vorhanden.")
+                      title="")
+        fig.update_layout(height=height, margin=dict(l=0, r=0, t=0, b=0))
+        return fig
+    return None
 
-def display_song_history(measurements):
+def get_song_history_figure(measurements, height=150):
     if not measurements:
-        st.write("Keine historischen Daten vorhanden.")
-        return
+        return None
     df = pd.DataFrame(measurements)
     if "timestamp" in df.columns and not df["timestamp"].isnull().all():
         df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
         fig = px.line(df, x="timestamp", y=["song_pop", "streams"],
                       labels={"timestamp": "Date", "value": "Value", "variable": "Metric"},
-                      title="Song History")
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.write("Keine Datum-Informationen in den Messdaten vorhanden.")
+                      title="")
+        fig.update_layout(height=height, margin=dict(l=0, r=0, t=0, b=0))
+        return fig
+    return None
 
 ######################################
 # Suchergebnisse anzeigen als Karteikarten (gruppiert nach Artist)
@@ -506,49 +551,27 @@ def display_search_results(results):
         artist_pop = representative.get("latest_measurement", {}).get("artist_pop", 0)
         monthly_listeners = representative.get("latest_measurement", {}).get("monthly_listeners", 0)
         artist_followers = representative.get("latest_measurement", {}).get("artist_followers", 0)
-        # Artist-Karte mit weißem Rahmen
-        artist_card = f"""
-        <div style="
-            border: 2px solid #ffffff;
-            border-radius: 8px;
-            padding: 16px;
-            margin: 16px 0;
-            box-shadow: 2px 2px 6px rgba(0,0,0,0.1);
-            background-color: #444444;
-            color: #ffffff;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            ">
-            <div style="display: flex; align-items: center;">
-                <a href="{artist_link}" target="_blank">
-                  <img src="{artist_image}" alt="Artist" style="width: 80px; height: 80px; border-radius: 50%; margin-right: 16px;">
-                </a>
-                <div>
-                  <h2 style="margin: 0;"><a href="{artist_link}" target="_blank">{artist_name}</a></h2>
-                  <p style="margin: 4px 0;">Popularity: {artist_pop}</p>
-                  <p style="margin: 4px 0;">Monthly Listeners: {monthly_listeners}</p>
-                  <p style="margin: 4px 0;">Followers: {artist_followers}</p>
-                </div>
-            </div>
-            <div style="font-size: 2rem; font-weight: bold; color: #FFD700;">
-                {hype_artist:.1f}
-            </div>
-        </div>
-        """
-        st.markdown(artist_card, unsafe_allow_html=True)
-        with st.expander("Show Artist History"):
-            all_artist_measurements = []
-            for s in songs:
-                if "measurements" in s:
-                    all_artist_measurements.extend(s["measurements"])
-            display_artist_history(all_artist_measurements)
+        # Artist-Karte in drei Spalten: Bild, Infos und Graph
+        cols_artist = st.columns([1, 2, 2])
+        with cols_artist[0]:
+            st.markdown(f'<a href="{artist_link}" target="_blank"><img src="{artist_image}" alt="Artist" style="width:80px; height:80px; border-radius:50%;"></a>', unsafe_allow_html=True)
+        with cols_artist[1]:
+            st.markdown(f"<h2><a href='{artist_link}' target='_blank'>{artist_name}</a></h2>", unsafe_allow_html=True)
+            st.markdown(f"<p>Popularity: {artist_pop}</p>", unsafe_allow_html=True)
+            st.markdown(f"<p>Monthly Listeners: {monthly_listeners}</p>", unsafe_allow_html=True)
+            st.markdown(f"<p>Followers: {artist_followers}</p>", unsafe_allow_html=True)
+            st.markdown(f"<p>Artist Hype Score: {hype_artist:.1f}</p>", unsafe_allow_html=True)
+        with cols_artist[2]:
+            artist_fig = get_artist_history_figure(representative.get("measurements", []), height=80)
+            if artist_fig:
+                st.plotly_chart(artist_fig, use_container_width=True)
+            else:
+                st.write("No Data")
+        st.markdown("---")
+        # Song-Karten: Für jeden Song der Gruppe
         st.markdown("<div style='display: flex; flex-direction: column;'>", unsafe_allow_html=True)
         for song in songs:
-            # Erzeuge Song-Karte mit drei Spalten: Cover, Infos und Graph
-            # Wir nutzen st.columns für ein sauberes Layout
-            cols = st.columns([1, 2, 2])
-            # Link für den Songtitel
+            cols_song = st.columns([1, 2, 2])
             try:
                 url = f"https://api.spotify.com/v1/tracks/{song['track_id']}"
                 headers = {"Authorization": f"Bearer {SPOTIFY_TOKEN}"}
@@ -564,36 +587,24 @@ def display_search_results(results):
                 cover_url = ""
                 track_url = ""
             hype_song = compute_song_hype(song)
-            # Link für Songtitel
             song_title_link = f"<h2><a href='{track_url}' target='_blank'>{song.get('track_name')}</a></h2>"
-            with cols[0]:
+            with cols_song[0]:
                 st.markdown(f'<a href="{track_url}" target="_blank"><img src="{cover_url}" alt="Cover" style="width:100%; border-radius:4px;"></a>', unsafe_allow_html=True)
-            with cols[1]:
+            with cols_song[1]:
                 st.markdown(song_title_link, unsafe_allow_html=True)
                 st.markdown(f"<p><strong>Release Date:</strong> {song.get('release_date')}</p>", unsafe_allow_html=True)
                 st.markdown(f"<p><strong>Song Pop:</strong> {song.get('latest_measurement', {}).get('song_pop', 0)}</p>", unsafe_allow_html=True)
                 st.markdown(f"<p><strong>Streams:</strong> {song.get('latest_measurement', {}).get('streams', 0)}</p>", unsafe_allow_html=True)
                 st.markdown(f"<p><strong>Hype Score:</strong> {hype_song:.1f}</p>", unsafe_allow_html=True)
-            with cols[2]:
-                if song.get("measurements"):
-                    df_song = pd.DataFrame(song.get("measurements"))
-                    if "timestamp" in df_song.columns and not df_song["timestamp"].isnull().all():
-                        df_song["timestamp"] = pd.to_datetime(df_song["timestamp"], errors="coerce")
-                        if len(df_song) == 1:
-                            fig_song = px.scatter(df_song, x="timestamp", y=["song_pop", "streams"],
-                                                  labels={"timestamp": "Date", "value": "Value"},
-                                                  title="Song History")
-                        else:
-                            fig_song = px.line(df_song, x="timestamp", y=["song_pop", "streams"],
-                                               labels={"timestamp": "Date", "value": "Value"},
-                                               title="Song History", markers=True)
-                        st.plotly_chart(fig_song, use_container_width=True)
-                    else:
-                        st.write("Keine Graphdaten")
+            with cols_song[2]:
+                song_fig = get_song_history_figure(song.get("measurements", []), height=150)
+                if song_fig:
+                    st.plotly_chart(song_fig, use_container_width=True)
                 else:
-                    st.write("Keine Graphdaten")
+                    st.write("No Data")
+            st.markdown("<hr>", unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
-        
+
 ######################################
 # Sidebar Buttons: Get New Music und Get Data
 ######################################
@@ -604,18 +615,22 @@ if st.sidebar.button("Get New Music", key="get_new_music_button"):
         log(f"Spotify Access Token: {spotify_token}")
         all_songs = []
         for pid in st.secrets["spotify"]["playlist_ids"]:
-            songs = get_playlist_songs(pid, spotify_token)
-            all_songs.extend(songs)
+            songs = get_playlist_data(pid, spotify_token).get("tracks", {}).get("items", [])
+            for item in songs:
+                track = item.get("track")
+                if track:
+                    all_songs.append(track)
         log(f"Gesammelte Songs: {len(all_songs)}")
         for song in all_songs:
-            if song["track_id"]:
-                if song_exists_in_notion(song["track_id"]):
-                    log(f"{song['track_name']} von {song['artist_name']} existiert bereits.")
+            if song.get("id"):
+                if song_exists_in_notion(song["id"]):
+                    log(f"{song.get('name')} existiert bereits.")
                 else:
-                    log(f"{song['track_name']} von {song['artist_name']} wird erstellt.")
-                    create_notion_page(song)
+                    log(f"{song.get('name')} wird erstellt.")
+                    # Hier würde deine Funktion zum Erstellen in Notion aufgerufen werden
+                    # create_notion_page(song)
             else:
-                log(f"{song['track_name']} hat keine Track ID und wird übersprungen.")
+                log(f"{song.get('name')} hat keine Track ID und wird übersprungen.")
     run_get_new_music()
     log("Get New Music abgeschlossen. Bitte Seite neu laden, um die aktualisierten Daten zu sehen.")
 
@@ -653,7 +668,7 @@ def search_songs(query):
             details = update_song_data(song, SPOTIFY_TOKEN)
             new_meas_id = create_measurement_entry(song, details)
             update_song_measurements_relation(song["page_id"], new_meas_id)
-            hype = compute_song_hype({"latest_measurement": details})
+            hype = compute_song_hype({"latest_measurement": details, "playlists": song.get("playlists", [])})
             update_hype_score_in_measurement(new_meas_id, hype)
             song["latest_measurement"] = details
             results[key] = song
@@ -665,7 +680,7 @@ def apply_filters_and_sort(results):
         lm = song.get("latest_measurement", {})
         pop = lm.get("song_pop", 0)
         streams = lm.get("streams", 0)
-        hype = compute_song_hype({"latest_measurement": lm})
+        hype = compute_song_hype({"latest_measurement": lm, "playlists": song.get("playlists", [])})
         if pop < pop_range[0] or pop > pop_range[1]:
             continue
         if streams < stream_range[0] or streams > stream_range[1]:
@@ -675,7 +690,7 @@ def apply_filters_and_sort(results):
         filtered[key] = song
     sorted_results = list(filtered.values())
     if sort_option == "Hype Score":
-        sorted_results.sort(key=lambda s: compute_song_hype({"latest_measurement": s.get("latest_measurement", {})}), reverse=True)
+        sorted_results.sort(key=lambda s: compute_song_hype({"latest_measurement": s.get("latest_measurement", {}), "playlists": s.get("playlists", [])}), reverse=True)
     elif sort_option == "Popularity":
         sorted_results.sort(key=lambda s: s.get("latest_measurement", {}).get("song_pop", 0), reverse=True)
     elif sort_option == "Streams":
@@ -685,7 +700,6 @@ def apply_filters_and_sort(results):
     final = {s.get("track_id") or s.get("page_id"): s for s in sorted_results}
     return final
 
-# Suche ausführen: "Start Search" oder "Confirm Filters"
 if start_search or confirm_filters:
     if search_query:
         results_found = search_songs(search_query)
@@ -696,3 +710,8 @@ if start_search or confirm_filters:
 else:
     st.title("Search Results")
     st.write("Bitte einen Suchbegriff eingeben oder Filter bestätigen.")
+
+# Wenn keine Logmeldungen mehr vorhanden sind, Log- und Fortschrittscontainer ausblenden
+if not st.session_state.get("log_messages"):
+    log_container.empty()
+    progress_container.empty()
