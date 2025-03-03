@@ -136,14 +136,29 @@ def get_songs_metadata():
     with ThreadPoolExecutor() as executor:
         for page in pages:
             props = page.get("properties", {})
-            track_name = "".join([t.get("plain_text", "") for t in props.get("Track Name", {}).get("title", [])]).strip()
-            artist_name = "".join([t.get("plain_text", "") for t in props.get("Artist Name", {}).get("rich_text", [])]).strip()
-            artist_id = "".join([t.get("plain_text", "") for t in props.get("Artist ID", {}).get("rich_text", [])]).strip()
-            track_id = "".join([t.get("plain_text", "") for t in props.get("Track ID", {}).get("rich_text", [])]).strip()
-            release_date = props.get("Release Date", {}).get("date", {}).get("start", "")
-            country_code = "".join([t.get("plain_text", "") for t in props.get("Country Code", {}).get("rich_text", [])]).strip()
+            track_name = ""
+            if "Track Name" in props and props["Track Name"].get("title"):
+                track_name = "".join([t.get("plain_text", "") for t in props["Track Name"]["title"]]).strip()
+            artist_name = ""
+            if "Artist Name" in props and props["Artist Name"].get("rich_text"):
+                artist_name = "".join([t.get("plain_text", "") for t in props["Artist Name"]["rich_text"]]).strip()
+            artist_id = ""
+            if "Artist ID" in props and props["Artist ID"].get("rich_text"):
+                artist_id = "".join([t.get("plain_text", "") for t in props["Artist ID"]["rich_text"]]).strip()
+            track_id = ""
+            if "Track ID" in props and props["Track ID"].get("rich_text"):
+                track_id = "".join([t.get("plain_text", "") for t in props["Track ID"]["rich_text"]]).strip()
+            release_date = ""
+            if "Release Date" in props and props["Release Date"].get("date"):
+                release_date = props["Release Date"]["date"].get("start", "")
+            country_code = ""
+            if "Country Code" in props and props["Country Code"].get("rich_text"):
+                country_code = "".join([t.get("plain_text", "") for t in props["Country Code"]["rich_text"]]).strip()
             last_edited = page.get("last_edited_time", "")
-            favourite = props.get("Favourite", {}).get("checkbox", False)
+            # Neues: Favourite-Status auslesen
+            favourite = False
+            if "Favourite" in props:
+                favourite = props["Favourite"].get("checkbox", False)
             measurements_ids = []
             if "Measurements" in props and props["Measurements"].get("relation"):
                 for rel in props["Measurements"]["relation"]:
@@ -192,13 +207,12 @@ def safe_timestamp(m):
         return datetime.datetime.min
 
 #############################
-# Hype Score Berechnung
+# Hype Score Berechnung (ohne Playlisten)
 #############################
-# Für Songs: Falls weniger als 2 Messungen vorliegen, legen wir einen initialen Score von 20 fest.
 def compute_song_hype(song):
     measurements = song.get("measurements", [])
     if len(measurements) < 2:
-        return 20
+        return 0
     sorted_ms = sorted(measurements, key=lambda m: safe_timestamp(m))
     latest = sorted_ms[-1]
     previous = sorted_ms[-2]
@@ -206,8 +220,7 @@ def compute_song_hype(song):
     growth_pop = latest.get("song_pop", 0) - previous.get("song_pop", 0)
     EPSILON = 5
     if abs(growth_streams) < EPSILON and abs(growth_pop) < EPSILON:
-        # Keine signifikante Änderung → initialer Score
-        return 20
+        return 0
     log_streams = math.log10(latest.get("streams", 0) + 1)
     base_current = (log_streams * 14.8) + (latest.get("song_pop", 0) * 8.75)
     growth_val = (growth_streams * 14.8) + (growth_pop * 8.75)
@@ -216,11 +229,10 @@ def compute_song_hype(song):
     hype = 100 * raw / (raw + K) if raw >= 0 else 0
     return max(0, min(hype, 100))
 
-# Für Artists: Analog – initialer Score 20, wenn keine Vergleichsdaten
 def compute_artist_hype(song):
     measurements = song.get("measurements", [])
     if len(measurements) < 2:
-        return 20
+        return 0
     sorted_ms = sorted(measurements, key=lambda m: safe_timestamp(m))
     latest = sorted_ms[-1]
     previous = sorted_ms[-2]
@@ -228,7 +240,7 @@ def compute_artist_hype(song):
     growth_pop = latest.get("artist_pop", 0) - previous.get("artist_pop", 0)
     EPSILON = 5
     if abs(growth_streams) < EPSILON and abs(growth_pop) < EPSILON:
-        return 20
+        return 0
     log_streams = math.log10(latest.get("streams", 0) + 1)
     base_current = (log_streams * 14.8) + (latest.get("artist_pop", 0) * 8.75)
     growth_val = (growth_streams * 14.8) + (growth_pop * 8.75)
@@ -407,13 +419,13 @@ def toggle_favourite_for_artist(artist_id, new_state=True):
     for song in songs_metadata.values():
         if song.get("artist_id") == artist_id:
             update_favourite_property(song["page_id"], new_state)
+            
 
 #############################
 # Measurement-Einträge & Hype Score Update
 #############################
 def create_measurement_entry(song, details):
     now = datetime.datetime.now().isoformat()
-    # Hier wird der Artist Hype Score (für Artist-Karte) über compute_artist_hype(song) berechnet
     payload = {
         "parent": {"database_id": measurements_db_id},
         "properties": {
@@ -461,7 +473,6 @@ def update_song_measurements_relation(page_id, new_measurement_id, retries=3):
 
 #############################
 # Fill Song Measurements ("Get Data")
-# Aktualisiert nur Songs, die nicht in den letzten 2 Stunden editiert wurden (basierend auf last_edited)
 #############################
 def fill_song_measurements():
     token = get_spotify_token()
@@ -484,8 +495,7 @@ def fill_song_measurements():
             details = update_song_data(song, token)
             new_meas_id = create_measurement_entry(song, details)
             update_song_measurements_relation(song["page_id"], new_meas_id)
-            # Hype Score: Falls Vergleichsdaten vorhanden und signifikante Unterschiede, dann berechnen,
-            # sonst (wenn keine signifikante Differenz) setzen wir den Score auf 0 (bzw. initial 20, wenn keine Daten)
+            # Hype Score Berechnung: nur, wenn Vergleichsdaten vorhanden und signifikant, sonst 0
             measurements = song.get("measurements", [])
             EPSILON = 5
             if len(measurements) >= 2:
@@ -506,8 +516,7 @@ def fill_song_measurements():
             else:
                 raw = 0
                 K = 1000
-            # Falls raw == 0 (keine signifikanten Unterschiede) setzen wir initial den Score auf 20
-            hype = 20 if raw == 0 else 100 * raw / (raw + K)
+            hype = 100 * raw / (raw + K) if raw >= 0 else 0
             if not update_hype_score_in_measurement(new_meas_id, hype):
                 log(f"Hype Score Update fehlgeschlagen für {song.get('track_name')}.")
                 i += 1
@@ -623,14 +632,8 @@ def update_favourite_property(page_id, new_state):
             "Favourite": {"checkbox": new_state}
         }
     }
-    st.write(f"Updating page {page_id} with payload: {payload}")  # Debug-Ausgabe
     r = requests.patch(url, headers=notion_headers, json=payload)
-    try:
-        r.raise_for_status()
-        st.write(f"Update successful for page {page_id}: {r.json()}")
-    except Exception as e:
-        st.error(f"Update failed for page {page_id}: {r.text}")
-        raise e
+    r.raise_for_status()
 
 def toggle_favourite_for_artist(artist_id, new_state=True):
     for song in songs_metadata.values():
@@ -676,6 +679,8 @@ def display_search_results(results):
                     if fig_follow:
                         st.plotly_chart(fig_follow, use_container_width=True)
             with cols_artist[3]:
+                # Verwende einen Button mit unique key, ohne st.experimental_rerun() – 
+                # stattdessen den lokalen Status in st.session_state updaten
                 if st.button(f"{star_icon}", key=f"fav_{artist_id}"):
                     toggle_favourite_for_artist(artist_id, not fav_state)
                     st.session_state.fav_updated = True
@@ -710,13 +715,13 @@ def display_search_results(results):
                     st.markdown(f"<p><strong>Streams:</strong> {song.get('latest_measurement', {}).get('streams', 0)}</p>", unsafe_allow_html=True)
                     st.markdown(f"<p style='font-size:1.2rem;'><strong>Hype Score: <span style='font-size:1.6rem; color:#FFD700;'>{hype_song:.1f}</span></strong></p>", unsafe_allow_html=True)
                 with cols_song[2]:
-                    with st.expander("Show Song Streams", expanded=True):
+                    with st.expander("Show Song Streams", expanded=False):
                         fig_streams = get_song_streams_figure(song.get("measurements", []))
                         if fig_streams:
                             st.plotly_chart(fig_streams, use_container_width=True)
                         else:
                             st.write("No Streams Data")
-                    with st.expander("Show Song Popularity", expanded=True):
+                    with st.expander("Show Song Popularity", expanded=False):
                         fig_pop = get_song_pop_figure(song.get("measurements", []))
                         if fig_pop:
                             st.plotly_chart(fig_pop, use_container_width=True)
@@ -781,7 +786,6 @@ def search_songs(query):
             details = update_song_data(song, SPOTIFY_TOKEN)
             new_meas_id = create_measurement_entry(song, details)
             update_song_measurements_relation(song["page_id"], new_meas_id)
-            # Hier berechnen wir den Song-Hype neu (mit den vorhandenen Messungen + neuer Daten)
             hype = compute_song_hype({**song, "measurements": song.get("measurements", []) + [details]})
             update_hype_score_in_measurement(new_meas_id, hype)
             song["latest_measurement"] = details
@@ -859,7 +863,7 @@ else:
         st.markdown(f"• {art.get('artist_name')} – Hype Score: {compute_artist_hype(art):.1f}")
 
 #############################
-# Favourites-Sektion (nur anzeigen, wenn vorhanden)
+# Favourites-Sektion
 #############################
 def get_favourite_artists(songs_metadata):
     artist_map = {}
@@ -877,3 +881,4 @@ if fav_artists:
     for aid, songs in fav_artists.items():
         rep = songs[0]
         st.markdown(f"• {rep.get('artist_name')}")
+
