@@ -189,17 +189,21 @@ def get_songs_metadata():
 songs_metadata = get_songs_metadata()
 
 #############################
-# Hype Score Berechnung (ohne Playlisten)
+# Safe Timestamp-Funktion (alle Timestamps offset-naive machen)
 #############################
 def safe_timestamp(m):
     t = m.get("timestamp")
     if not t:
         return datetime.datetime.min
     try:
-        return datetime.datetime.fromisoformat(t)
+        dt = datetime.datetime.fromisoformat(t)
+        return dt.replace(tzinfo=None)
     except:
         return datetime.datetime.min
 
+#############################
+# Hype Score Berechnung (ohne Playlisten, nur Streams & Popularity; wenn keine signifikanten Unterschiede vorliegen, wird 0)
+#############################
 def compute_song_hype(song):
     measurements = song.get("measurements", [])
     if len(measurements) < 2:
@@ -212,7 +216,6 @@ def compute_song_hype(song):
     EPSILON = 5
     if abs(growth_streams) < EPSILON and abs(growth_pop) < EPSILON:
         return 0
-    # Dämpfung der Streams mit log10
     log_streams = math.log10(latest.get("streams", 0) + 1)
     base_current = (log_streams * 14.8) + (latest.get("song_pop", 0) * 8.75)
     growth_val = (growth_streams * 14.8) + (growth_pop * 8.75)
@@ -383,9 +386,7 @@ def update_favourite_property(page_id, new_state):
     url = f"{notion_page_endpoint}/{page_id}"
     payload = {
         "properties": {
-            "Favourite": {
-                "checkbox": new_state
-            }
+            "Favourite": {"checkbox": new_state}
         }
     }
     r = requests.patch(url, headers=notion_headers, json=payload)
@@ -395,15 +396,12 @@ def is_song_favourite(page_id):
     url = f"{notion_page_endpoint}/{page_id}"
     r = requests.get(url, headers=notion_headers)
     r.raise_for_status()
-    props = r.json().get("properties", {})
-    return props.get("Favourite", {}).get("checkbox", False)
+    return r.json().get("properties", {}).get("Favourite", {}).get("checkbox", False)
 
 def is_artist_favourite(artist_id):
-    # Wenn mindestens ein Song des Artists als Favourite markiert ist.
     for song in songs_metadata.values():
-        if song.get("artist_id") == artist_id:
-            if is_song_favourite(song["page_id"]):
-                return True
+        if song.get("artist_id") == artist_id and is_song_favourite(song["page_id"]):
+            return True
     return False
 
 def toggle_favourite_for_artist(artist_id, new_state=True):
@@ -412,7 +410,7 @@ def toggle_favourite_for_artist(artist_id, new_state=True):
             update_favourite_property(song["page_id"], new_state)
 
 #############################
-# Measurement-Einträge anlegen & Relation aktualisieren
+# Measurement-Einträge & Hype Score Update
 #############################
 def create_measurement_entry(song, details):
     now = datetime.datetime.now().isoformat()
@@ -485,7 +483,7 @@ def fill_song_measurements():
             details = update_song_data(song, token)
             new_meas_id = create_measurement_entry(song, details)
             update_song_measurements_relation(song["page_id"], new_meas_id)
-            # Hype Score Berechnung: nur wenn signifikante Unterschiede vorliegen, sonst 0
+            # Hype Score Berechnung: nur, wenn Vergleichsdaten vorliegen, ansonsten 0
             measurements = song.get("measurements", [])
             EPSILON = 5
             if len(measurements) >= 2:
@@ -601,7 +599,7 @@ def group_results_by_artist(results):
     return grouped
 
 #############################
-# Favourites-Funktionalität (Sternchen)
+# Favourites-Funktionalität
 #############################
 def is_song_favourite(page_id):
     url = f"{notion_page_endpoint}/{page_id}"
@@ -631,7 +629,7 @@ def toggle_favourite_for_artist(artist_id, new_state=True):
             update_favourite_property(song["page_id"], new_state)
 
 #############################
-# Anzeige der Suchergebnisse (Artist & Song Karten)
+# Anzeige der Suchergebnisse (Artist- & Song-Karten)
 #############################
 def display_search_results(results):
     st.title("Search Results")
@@ -648,6 +646,7 @@ def display_search_results(results):
         artist_img = rep.get("latest_measurement", {}).get("artist_image", "")
         fav_state = is_artist_favourite(artist_id)
         star_icon = "★" if fav_state else "☆"
+        
         # Artist-Karte
         with st.container():
             cols_artist = st.columns([1, 3, 2, 1])
@@ -668,16 +667,15 @@ def display_search_results(results):
                     if fig_follow:
                         st.plotly_chart(fig_follow, use_container_width=True)
             with cols_artist[3]:
-                if st.button(st.markdown(f"<span style='font-size:2rem; color:#ffffff;'>{star_icon}</span>", unsafe_allow_html=True), key=f"fav_{artist_id}"):
+                if st.button(f"<span style='font-size:2rem; color:#ffffff;'>{star_icon}</span>", key=f"fav_{artist_id}"):
                     toggle_favourite_for_artist(artist_id, not fav_state)
                     st.experimental_rerun()
-            st.markdown("</div>", unsafe_allow_html=True)
         st.markdown("---")
+        
         # Song-Karten des Künstlers
         for song in songs:
             with st.container():
                 cols_song = st.columns([1, 3, 2])
-                # Cover und Link
                 try:
                     track_url = f"https://api.spotify.com/v1/tracks/{song['track_id']}"
                     r = requests.get(track_url, headers={"Authorization": f"Bearer {SPOTIFY_TOKEN}"})
@@ -696,7 +694,7 @@ def display_search_results(results):
                 with cols_song[0]:
                     st.markdown(f'<a href="{song_link}" target="_blank"><img src="{cover_url}" alt="Cover" style="width:200px; border-radius:8px; object-fit:cover;"></a>', unsafe_allow_html=True)
                 with cols_song[1]:
-                    st.markdown(f"<h2><a href='{song_link}' target='_blank' style='color:#ffffff;'>{song_title}</a></h2>", unsafe_allow_html=True)
+                    st.markdown(f"<h2 style='margin:0 0 10px 0;'><a href='{song_link}' target='_blank' style='color:#ffffff;'>{song_title}</a></h2>", unsafe_allow_html=True)
                     st.markdown(f"<p><strong>Release Date:</strong> {song.get('release_date')}</p>", unsafe_allow_html=True)
                     st.markdown(f"<p><strong>Song Pop:</strong> {song.get('latest_measurement', {}).get('song_pop', 0)}</p>", unsafe_allow_html=True)
                     st.markdown(f"<p><strong>Streams:</strong> {song.get('latest_measurement', {}).get('streams', 0)}</p>", unsafe_allow_html=True)
@@ -756,11 +754,11 @@ if st.sidebar.button("Get New Music", key="get_new_music_button"):
                 log(f"{s.get('name')} hat keine Track ID und wird übersprungen.")
     run_get_new_music()
     log("Get New Music abgeschlossen. Bitte Seite neu laden.")
-    
+
 if st.sidebar.button("Get Data", key="get_data_button"):
     msgs = fill_song_measurements()
-    for m in msgs:
-        log(m)
+    for msg in msgs:
+        log(msg)
 
 #############################
 # Suchergebnisse: Filtern & Sortieren
@@ -816,7 +814,7 @@ else:
     st.title("Search Results")
     st.write("Bitte einen Suchbegriff eingeben oder Filter bestätigen.")
 
-# Optional: Falls keine Logmeldungen mehr vorhanden, Log- und Fortschrittscontainer ausblenden
+# Optional: Log- und Fortschrittscontainer ausblenden, wenn keine Logmeldungen mehr vorhanden
 if not st.session_state.get("log_messages"):
     log_container.empty()
     progress_container.empty()
@@ -824,6 +822,16 @@ if not st.session_state.get("log_messages"):
 #############################
 # Top 10 Artists To Watch
 #############################
+def safe_timestamp(m):
+    t = m.get("timestamp")
+    if not t:
+        return datetime.datetime.min
+    try:
+        dt = datetime.datetime.fromisoformat(t)
+        return dt.replace(tzinfo=None)
+    except:
+        return datetime.datetime.min
+
 def get_top_10_artists_to_watch(songs_metadata):
     artist_map = {}
     for key, song in songs_metadata.items():
@@ -840,15 +848,6 @@ def get_top_10_artists_to_watch(songs_metadata):
     all_artists.sort(key=lambda s: get_artist_score(s), reverse=True)
     top_artists = [a for a in all_artists if get_artist_score(a) > 0]
     return top_artists[:10]
-
-def safe_timestamp(m):
-    t = m.get("timestamp")
-    if not t:
-        return datetime.datetime.min
-    try:
-        return datetime.datetime.fromisoformat(t)
-    except:
-        return datetime.datetime.min
 
 st.header("Top 10 Artists To Watch")
 top10 = get_top_10_artists_to_watch(songs_metadata)
