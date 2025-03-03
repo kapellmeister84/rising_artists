@@ -53,7 +53,7 @@ def get_measurement_details(measurement_id):
     response.raise_for_status()
     data = response.json()
     props = data.get("properties", {})
-    # Nutze den automatisch gesetzten created_time als Timestamp
+    # created_time von Notion als Timestamp nutzen
     timestamp = data.get("created_time", "")
     return {
         "timestamp": timestamp,
@@ -136,7 +136,7 @@ def get_songs_metadata():
 songs_metadata = get_songs_metadata()
 
 ######################################
-# Hype Score Berechnung (nur anhand der neuesten Messung)
+# Hype Score Berechnung (basierend auf der neuesten Messung)
 ######################################
 def compute_song_hype(song):
     m = song.get("latest_measurement", {})
@@ -154,15 +154,25 @@ def compute_artist_hype(song):
     M_scaled = min(math.log10(monthly + 1) / 6 * 100, 100)
     return 0.4 * A + 0.3 * F_scaled + 0.3 * M_scaled
 
-def update_hype_score_in_measurement(measurement_id, hype_score):
+def update_hype_score_in_measurement(measurement_id, hype_score, retries=3):
     url = f"{notion_page_endpoint}/{measurement_id}"
     payload = {
          "properties": {
               "Hype Score": {"number": hype_score}
          }
     }
-    response = requests.patch(url, headers=notion_headers, json=payload)
-    response.raise_for_status()
+    for attempt in range(retries):
+        try:
+            response = requests.patch(url, headers=notion_headers, json=payload)
+            response.raise_for_status()
+            return
+        except requests.HTTPError as e:
+            if response.status_code == 409:
+                time.sleep(1)  # Kurze Pause vor erneutem Versuch
+                continue
+            else:
+                raise e
+    st.warning(f"Konnte Hype Score für {measurement_id} nach {retries} Versuchen nicht aktualisieren.")
 
 ######################################
 # Sidebar: Suchfeld, Filter, Log & Buttons
@@ -170,7 +180,7 @@ def update_hype_score_in_measurement(measurement_id, hype_score):
 st.sidebar.title("Search")
 search_query = st.sidebar.text_input("Search by artist or song:")
 
-# Direkt unter dem Suchfeld: Start Search Button
+# Start Search Button direkt unter dem Suchfeld
 start_search = st.sidebar.button("Start Search", key="start_search_button")
 
 st.sidebar.markdown("## Filters")
@@ -179,7 +189,7 @@ stream_range = st.sidebar.slider("Stream Count Range", 0, 20000000, (0, 20000000
 hype_range = st.sidebar.slider("Hype Score Range", 0, 100, (0, 100))
 sort_option = st.sidebar.selectbox("Sort by", ["Hype Score", "Popularity", "Streams", "Release Date"])
 
-# Button für Filter, falls kein Suchbegriff eingegeben wird
+# Confirm Filters Button (um auch ohne Suchbegriff zu suchen)
 confirm_filters = st.sidebar.button("Confirm Filters", key="confirm_filters_button")
 
 st.sidebar.markdown("---")
@@ -190,7 +200,8 @@ def log(msg):
     st.session_state.log_messages.append(f"{datetime.datetime.now().strftime('%H:%M:%S')}: {msg}")
     st.sidebar.text_area("Log", "\n".join(st.session_state.log_messages), height=200)
 
-def show_progress(progress, info):
+def show_progress(current, total, info=""):
+    progress = current / total
     pb = st.sidebar.progress(progress)
     st.sidebar.write(info)
     return pb
@@ -354,16 +365,22 @@ def update_song_measurements_relation(page_id, new_measurement_id, retries=3):
 def fill_song_measurements():
     spotify_token = get_spotify_token()
     messages = []
+    total = len(songs_metadata)
+    progress_bar = st.sidebar.progress(0)
+    i = 0
     for key, song in songs_metadata.items():
         if song.get("track_id"):
             details = update_song_data(song, spotify_token)
             new_meas_id = create_measurement_entry(song, details)
             update_song_measurements_relation(song["page_id"], new_meas_id)
-            # Berechne Hype Score basierend auf den neuesten Messdaten
             hype = compute_song_hype({"latest_measurement": details})
             update_hype_score_in_measurement(new_meas_id, hype)
             song["latest_measurement"] = details
-            messages.append(f"Neue Measurement für {song.get('track_name')} erstellt (ID: {new_meas_id}, Hype: {hype:.1f})")
+            msg = f"'{song.get('track_name')}' aktualisiert (Hype: {hype:.1f})"
+            messages.append(msg)
+            st.sidebar.write(msg)
+        i += 1
+        progress_bar.progress(i / total)
     return messages
 
 def update_hype_score_in_measurement(measurement_id, hype_score):
@@ -395,7 +412,7 @@ def song_exists_in_notion(track_id):
         return False
 
 ######################################
-# Neue Funktion: Gruppierung der Suchergebnisse nach Artist
+# Gruppierung der Suchergebnisse nach Artist
 ######################################
 def group_results_by_artist(results):
     grouped = {}
@@ -407,7 +424,7 @@ def group_results_by_artist(results):
     return grouped
 
 ######################################
-# Neue Funktionen: Graphen anzeigen
+# Graphen anzeigen
 ######################################
 def display_artist_history(measurements):
     if not measurements:
@@ -438,7 +455,7 @@ def display_song_history(measurements):
         st.write("Keine Datum-Informationen in den Messdaten vorhanden.")
 
 ######################################
-# Neue Funktion: Suchergebnisse anzeigen als Karteikarten (gruppiert nach Artist)
+# Suchergebnisse anzeigen als Karteikarten (gruppiert nach Artist)
 ######################################
 def display_search_results(results):
     st.title("Search Results")
@@ -585,10 +602,6 @@ def song_exists_in_notion(track_id):
 ######################################
 # Hauptbereich: Suchergebnisse anzeigen (Filter & Sortierung)
 ######################################
-
-st.title("ARTIST SCOUT 1.0b")
-st.header("Top 10 songs to watch")
-
 def search_songs(query):
     query_lower = query.lower()
     results = {}
@@ -629,7 +642,7 @@ def apply_filters_and_sort(results):
     final = {s.get("track_id") or s.get("page_id"): s for s in sorted_results}
     return final
 
-# Suche ausführen: Entweder per Suchbegriff ("Start Search") oder nur über die Filter ("Confirm Filters")
+# Suchergebnisse auslösen: Entweder "Start Search" oder "Confirm Filters"
 if start_search or confirm_filters:
     if search_query:
         results_found = search_songs(search_query)
