@@ -36,16 +36,8 @@ a:hover {
     color: #000000 !important;
 }
 /* Container Styles für Artist- und Song-Karteikarten */
-.artist-card {
+.artist-card, .song-card {
     border: 2px solid #ffffff;
-    border-radius: 8px;
-    padding: 20px;
-    margin-bottom: 20px;
-    background-color: #444444;
-    color: #ffffff;
-}
-.song-card {
-    border: 1px solid #ccc;
     border-radius: 8px;
     padding: 20px;
     margin-bottom: 20px;
@@ -155,7 +147,10 @@ def get_songs_metadata():
             if "Country Code" in props and props["Country Code"].get("rich_text"):
                 country_code = "".join([t.get("plain_text", "") for t in props["Country Code"]["rich_text"]]).strip()
             last_edited = page.get("last_edited_time", "")
-            
+            # Neues: Favourite-Status auslesen
+            favourite = False
+            if "Favourite" in props:
+                favourite = props["Favourite"].get("checkbox", False)
             measurements_ids = []
             if "Measurements" in props and props["Measurements"].get("relation"):
                 for rel in props["Measurements"]["relation"]:
@@ -173,6 +168,7 @@ def get_songs_metadata():
                 "release_date": release_date,
                 "country_code": country_code,
                 "last_edited": last_edited,
+                "favourite": favourite,
                 "measurements_ids": measurements_ids
             }
         for measurement_id, future in measurement_futures.items():
@@ -380,7 +376,41 @@ def update_song_data(song, token):
         st.error(f"Error fetching data for track {song['track_name']}: {r.text}")
         return {}
 
+#############################
+# Favourites-Funktionalität
+#############################
+def update_favourite_property(page_id, new_state):
+    url = f"{notion_page_endpoint}/{page_id}"
+    payload = {
+        "properties": {
+            "Favourite": {"checkbox": new_state}
+        }
+    }
+    st.write(f"Updating page {page_id} with payload: {payload}")  # Debug-Ausgabe
+    r = requests.patch(url, headers=notion_headers, json=payload)
+    try:
+        r.raise_for_status()
+        st.write(f"Update successful for page {page_id}: {r.json()}")
+    except Exception as e:
+        st.error(f"Update failed for page {page_id}: {r.text}")
+        raise e
 
+def is_song_favourite(page_id):
+    url = f"{notion_page_endpoint}/{page_id}"
+    r = requests.get(url, headers=notion_headers)
+    r.raise_for_status()
+    return r.json().get("properties", {}).get("Favourite", {}).get("checkbox", False)
+
+def is_artist_favourite(artist_id):
+    for song in songs_metadata.values():
+        if song.get("artist_id") == artist_id and is_song_favourite(song["page_id"]):
+            return True
+    return False
+
+def toggle_favourite_for_artist(artist_id, new_state=True):
+    for song in songs_metadata.values():
+        if song.get("artist_id") == artist_id:
+            update_favourite_property(song["page_id"], new_state)
 
 #############################
 # Measurement-Einträge & Hype Score Update
@@ -431,82 +461,6 @@ def update_song_measurements_relation(page_id, new_measurement_id, retries=3):
         else:
             patch_resp.raise_for_status()
     st.warning(f"Konnte Measurements für Seite {page_id} nach {retries} Versuchen nicht aktualisieren.")
-
-#############################
-# Fill Song Measurements ("Get Data")
-#############################
-def fill_song_measurements():
-    token = get_spotify_token()
-    messages = []
-    total = len(songs_metadata)
-    progress_container.empty()
-    i = 0
-    now = datetime.datetime.now(datetime.timezone.utc)
-    for key, song in songs_metadata.items():
-        update_needed = True
-        if song.get("last_edited"):
-            try:
-                last_edit = datetime.datetime.fromisoformat(song["last_edited"].replace("Z", "+00:00"))
-                if (now - last_edit).total_seconds() < 2 * 3600:
-                    log(f"Überspringe '{song.get('track_name')}' – Zuletzt editiert vor < 2h.")
-                    update_needed = False
-            except Exception as e:
-                log(f"Zeitkonvertierungsfehler bei '{song.get('track_name')}': {e}")
-        if update_needed and song.get("track_id"):
-            details = update_song_data(song, token)
-            new_meas_id = create_measurement_entry(song, details)
-            update_song_measurements_relation(song["page_id"], new_meas_id)
-            # Hype Score Berechnung: nur, wenn Vergleichsdaten vorhanden und signifikant, sonst 0
-            measurements = song.get("measurements", [])
-            EPSILON = 5
-            if len(measurements) >= 2:
-                sorted_ms = sorted(measurements, key=lambda m: safe_timestamp(m))
-                previous = sorted_ms[-2]
-                prev_streams = previous.get("streams", 0)
-                prev_pop = previous.get("song_pop", 0)
-                prev_base = (prev_streams * 14.8) + (prev_pop * 8.75)
-                current_streams = details.get("streams", 0)
-                current_pop = details.get("song_pop", 0)
-                current_base = (current_streams * 14.8) + (current_pop * 8.75)
-                growth = current_base - prev_base
-                if abs(growth) < EPSILON:
-                    raw = 0
-                else:
-                    raw = current_base + growth
-                K = 100
-            else:
-                raw = 0
-                K = 1000
-            hype = 100 * raw / (raw + K) if raw >= 0 else 0
-            if not update_hype_score_in_measurement(new_meas_id, hype):
-                log(f"Hype Score Update fehlgeschlagen für {song.get('track_name')}.")
-                i += 1
-                continue
-            song["latest_measurement"] = details
-            msg = f"'{song.get('track_name')}' aktualisiert. Hype Score: {hype:.1f}"
-            messages.append(msg)
-            log(msg)
-        i += 1
-        show_progress(i, total, f"Aktualisiere {i}/{total} Songs")
-    progress_container.empty()
-    return messages
-
-#############################
-# Song Exists
-#############################
-def song_exists_in_notion(track_id):
-    payload = {
-        "filter": {
-            "property": "Track ID",
-            "rich_text": {"equals": track_id}
-        }
-    }
-    r = requests.post(f"{notion_query_endpoint}/{songs_database_id}/query", headers=notion_headers, json=payload)
-    if r.status_code == 200:
-        return len(r.json().get("results", [])) > 0
-    else:
-        st.error("Notion-Query Fehler: " + r.text)
-        return False
 
 #############################
 # Graph-Funktionen
@@ -571,13 +525,11 @@ def group_results_by_artist(results):
         grouped[group_key].append(song)
     return grouped
 
-
-st.title("ARTIST SCOUT 1.0")
 #############################
-# Anzeige der Suchergebnisse (Artist- & Song-Karten)
+# Anzeige der Suchergebnisse (Artist- & Song-Karten) mit aktualisierten Graphen
 #############################
 def display_search_results(results):
-    st.header("Search Results")
+    st.title("Search Results")
     grouped = group_results_by_artist(results)
     for group_key, songs in grouped.items():
         rep = songs[0]
@@ -589,6 +541,8 @@ def display_search_results(results):
         monthly_listeners = rep.get("latest_measurement", {}).get("monthly_listeners", 0)
         artist_followers = rep.get("latest_measurement", {}).get("artist_followers", 0)
         artist_img = rep.get("latest_measurement", {}).get("artist_image", "")
+        fav_state = rep.get("favourite", False)
+        star_icon = "★" if fav_state else "☆"
         
         # Artist-Karte
         with st.container():
@@ -597,10 +551,10 @@ def display_search_results(results):
                 st.markdown(f'<a href="{artist_link}" target="_blank"><img src="{artist_img}" alt="Artist" style="width:120px; height:120px; border-radius:50%; object-fit:cover;"></a>', unsafe_allow_html=True)
             with cols_artist[1]:
                 st.markdown(f"<h1><a href='{artist_link}' target='_blank' style='color:#ffffff;'>{artist_name}</a></h1>", unsafe_allow_html=True)
-                st.markdown(f"<p>Popularity: {artist_pop}</p>", unsafe_allow_html=True)
-                st.markdown(f"<p>Monthly Listeners: {monthly_listeners}</p>", unsafe_allow_html=True)
-                st.markdown(f"<p>Followers: {artist_followers}</p>", unsafe_allow_html=True)
-                st.markdown(f"<p style='font-size:1.3rem;'><strong>Artist Hype Score: <span style='font-size:1.6rem; color:#FFD700;'>{hype_artist:.1f}</span></strong></p>", unsafe_allow_html=True)
+                st.markdown(f"<p style='color:#ffffff;'>Popularity: {artist_pop}</p>", unsafe_allow_html=True)
+                st.markdown(f"<p style='color:#ffffff;'>Monthly Listeners: {monthly_listeners}</p>", unsafe_allow_html=True)
+                st.markdown(f"<p style='color:#ffffff;'>Followers: {artist_followers}</p>", unsafe_allow_html=True)
+                st.markdown(f"<p style='font-size:1.3rem; color:#ffffff;'><strong>Artist Hype Score: <span style='font-size:1.6rem; color:#FFD700;'>{hype_artist:.1f}</span></strong></p>", unsafe_allow_html=True)
             with cols_artist[2]:
                 with st.expander("Show Artist Charts", expanded=False):
                     fig_pop = get_artist_pop_monthly_figure(rep.get("measurements", []))
@@ -609,48 +563,51 @@ def display_search_results(results):
                     fig_follow = get_artist_followers_figure(rep.get("measurements", []))
                     if fig_follow:
                         st.plotly_chart(fig_follow, use_container_width=True)
-            
+            with cols_artist[3]:
+                if st.button(f"{star_icon}", key=f"fav_{artist_id}"):
+                    toggle_favourite_for_artist(artist_id, not fav_state)
+                    st.session_state.fav_updated = True
+            st.markdown("---", unsafe_allow_html=True)
         
-        # Song-Karten des Artists
+        # Song-Karten des Artists – Graphen neben Cover & Infos
         for song in songs:
             with st.container():
-                cols_song = st.columns([1, 3, 2])
-                try:
-                    track_url = f"https://api.spotify.com/v1/tracks/{song['track_id']}"
-                    r = requests.get(track_url, headers={"Authorization": f"Bearer {SPOTIFY_TOKEN}"})
-                    r.raise_for_status()
-                    data = r.json()
-                    cover_url = ""
-                    if data.get("album") and data["album"].get("images"):
-                        cover_url = data["album"]["images"][0].get("url", "")
-                    song_link = data.get("external_urls", {}).get("spotify", "")
-                except Exception as e:
-                    log(f"Fehler beim Abrufen des Covers für {song.get('track_name')}: {e}")
-                    cover_url = ""
-                    song_link = ""
-                hype_song = compute_song_hype(song)
-                song_title = song.get("track_name", "Unknown Song")
+                cols_song = st.columns([1, 2])
+                # Linke Spalte: Cover und Infos
                 with cols_song[0]:
-                    st.markdown(f'<a href="{song_link}" target="_blank"><img src="{cover_url}" alt="Cover" style="width:200px; border-radius:8px; object-fit:cover;"></a>', unsafe_allow_html=True)
+                    try:
+                        track_url = f"https://api.spotify.com/v1/tracks/{song['track_id']}"
+                        r = requests.get(track_url, headers={"Authorization": f"Bearer {SPOTIFY_TOKEN}"})
+                        r.raise_for_status()
+                        data = r.json()
+                        cover_url = ""
+                        if data.get("album") and data["album"].get("images"):
+                            cover_url = data["album"]["images"][0].get("url", "")
+                        song_link = data.get("external_urls", {}).get("spotify", "")
+                    except Exception as e:
+                        log(f"Fehler beim Abrufen des Covers für {song.get('track_name')}: {e}")
+                        cover_url = ""
+                        song_link = ""
+                    st.markdown(f'<a href="{song_link}" target="_blank"><img src="{cover_url}" alt="Cover" style="width:100%; border-radius:8px; object-fit:cover;"></a>', unsafe_allow_html=True)
+                    song_title = song.get("track_name", "Unknown Song")
+                    st.markdown(f"<h2 style='margin: 10px 0 5px 0; color:#ffffff;'><a href='{song_link}' target='_blank' style='color:#ffffff;'>{song_title}</a></h2>", unsafe_allow_html=True)
+                    st.markdown(f"<p style='color:#ffffff;'><strong>Release Date:</strong> {song.get('release_date')}</p>", unsafe_allow_html=True)
+                    st.markdown(f"<p style='color:#ffffff;'><strong>Song Pop:</strong> {song.get('latest_measurement', {}).get('song_pop', 0)}</p>", unsafe_allow_html=True)
+                    st.markdown(f"<p style='font-size:1.2rem; color:#ffffff;'><strong>Hype Score: <span style='font-size:1.6rem; color:#FFD700;'>{compute_song_hype(song):.1f}</span></strong></p>", unsafe_allow_html=True)
+                # Rechte Spalte: Graphen, die den verfügbaren Platz nutzen
                 with cols_song[1]:
-                    st.markdown(f"<h2 style='margin:0 0 10px 0;'><a href='{song_link}' target='_blank' style='color:#ffffff;'>{song_title}</a></h2>", unsafe_allow_html=True)
-                    st.markdown(f"<p><strong>Release Date:</strong> {song.get('release_date')}</p>", unsafe_allow_html=True)
-                    st.markdown(f"<p><strong>Song Pop:</strong> {song.get('latest_measurement', {}).get('song_pop', 0)}</p>", unsafe_allow_html=True)
-                    st.markdown(f"<p><strong>Streams:</strong> {song.get('latest_measurement', {}).get('streams', 0)}</p>", unsafe_allow_html=True)
-                    st.markdown(f"<p style='font-size:1.2rem;'><strong>Hype Score: <span style='font-size:1.6rem; color:#FFD700;'>{hype_song:.1f}</span></strong></p>", unsafe_allow_html=True)
-                with cols_song[2]:
-                    with st.expander("Show Song Streams", expanded=False):
-                        fig_streams = get_song_streams_figure(song.get("measurements", []))
-                        if fig_streams:
-                            st.plotly_chart(fig_streams, use_container_width=True)
-                        else:
-                            st.write("No Streams Data")
-                    with st.expander("Show Song Popularity", expanded=False):
-                        fig_pop = get_song_pop_figure(song.get("measurements", []))
-                        if fig_pop:
-                            st.plotly_chart(fig_pop, use_container_width=True)
-                        else:
-                            st.write("No Popularity Data")
+                    st.markdown("<p style='color:#ffffff;'>Streams</p>", unsafe_allow_html=True)
+                    fig_streams = get_song_streams_figure(song.get("measurements", []))
+                    if fig_streams:
+                        st.plotly_chart(fig_streams, use_container_width=True)
+                    else:
+                        st.write("No Streams Data")
+                    st.markdown("<p style='color:#ffffff;'>Popularity</p>", unsafe_allow_html=True)
+                    fig_pop = get_song_pop_figure(song.get("measurements", []))
+                    if fig_pop:
+                        st.plotly_chart(fig_pop, use_container_width=True)
+                    else:
+                        st.write("No Popularity Data")
             st.markdown("<hr>", unsafe_allow_html=True)
 
 #############################
@@ -695,6 +652,57 @@ if st.sidebar.button("Get New Music", key="get_new_music_button"):
     log("Get New Music abgeschlossen. Bitte Seite neu laden.")
     
 if st.sidebar.button("Get Data", key="get_data_button"):
+    def fill_song_measurements():
+        token = get_spotify_token()
+        messages = []
+        total = len(songs_metadata)
+        progress_container.empty()
+        i = 0
+        now = datetime.datetime.now(datetime.timezone.utc)
+        for key, song in songs_metadata.items():
+            update_needed = True
+            if song.get("last_edited"):
+                try:
+                    last_edit = datetime.datetime.fromisoformat(song["last_edited"].replace("Z", "+00:00"))
+                    if (now - last_edit).total_seconds() < 2 * 3600:
+                        log(f"Überspringe '{song.get('track_name')}' – Zuletzt editiert vor < 2h.")
+                        update_needed = False
+                except Exception as e:
+                    log(f"Zeitkonvertierungsfehler bei '{song.get('track_name')}': {e}")
+            if update_needed and song.get("track_id"):
+                details = update_song_data(song, token)
+                new_meas_id = create_measurement_entry(song, details)
+                update_song_measurements_relation(song["page_id"], new_meas_id)
+                measurements = song.get("measurements", [])
+                EPSILON = 5
+                if len(measurements) >= 2:
+                    sorted_ms = sorted(measurements, key=lambda m: safe_timestamp(m))
+                    previous = sorted_ms[-2]
+                    prev_streams = previous.get("streams", 0)
+                    prev_pop = previous.get("song_pop", 0)
+                    prev_base = (prev_streams * 14.8) + (prev_pop * 8.75)
+                    current_streams = details.get("streams", 0)
+                    current_pop = details.get("song_pop", 0)
+                    current_base = (current_streams * 14.8) + (current_pop * 8.75)
+                    growth = current_base - prev_base
+                    raw = 0 if abs(growth) < EPSILON else current_base + growth
+                    K = 100
+                else:
+                    raw = 0
+                    K = 1000
+                hype = 100 * raw / (raw + K) if raw >= 0 else 0
+                if not update_hype_score_in_measurement(new_meas_id, hype):
+                    log(f"Hype Score Update fehlgeschlagen für {song.get('track_name')}.")
+                    i += 1
+                    continue
+                song["latest_measurement"] = details
+                msg = f"'{song.get('track_name')}' aktualisiert. Hype Score: {hype:.1f}"
+                messages.append(msg)
+                log(msg)
+            i += 1
+            show_progress(i, total, f"Aktualisiere {i}/{total} Songs")
+        progress_container.empty()
+        return messages
     msgs = fill_song_measurements()
     for msg in msgs:
         log(msg)
@@ -702,6 +710,20 @@ if st.sidebar.button("Get Data", key="get_data_button"):
 #############################
 # Suchergebnisse: Filtern & Sortieren
 #############################
+def song_exists_in_notion(track_id):
+    payload = {
+        "filter": {
+            "property": "Track ID",
+            "rich_text": {"equals": track_id}
+        }
+    }
+    r = requests.post(f"{notion_query_endpoint}/{songs_database_id}/query", headers=notion_headers, json=payload)
+    if r.status_code == 200:
+        return len(r.json().get("results", [])) > 0
+    else:
+        st.error("Notion-Query Fehler: " + r.text)
+        return False
+
 def search_songs(query):
     query_lower = query.lower()
     results = {}
@@ -753,36 +775,60 @@ else:
     st.title("Search Results")
     st.write("Bitte einen Suchbegriff eingeben oder Filter bestätigen.")
 
+#############################
+# Zuletzt angesehen (Recent Searches)
+#############################
+# Beim App-Start: Aktualisiere die gespeicherten "Zuletzt angesehen"-Einträge mit aktuellen Messwerten
+if "recent_searches" in st.session_state:
+    for tile in st.session_state.recent_searches:
+        for song in songs_metadata.values():
+            if song.get("artist_name") == tile["artist_name"]:
+                new_meas = song.get("latest_measurement", {})
+                tile["artist_img"] = new_meas.get("artist_image", tile["artist_img"])
+                tile["artist_pop"] = new_meas.get("artist_pop", tile["artist_pop"])
+                tile["monthly_listeners"] = new_meas.get("monthly_listeners", tile["monthly_listeners"])
+                break
+
+# Nach einer Suche: Speichere die Ergebnisse in den Session-State (maximal 5, ohne Duplikate)
+if start_search or confirm_filters:
+    if final_results:
+        grouped = group_results_by_artist(final_results)
+        recent_tiles = []
+        for group_key, songs in grouped.items():
+            rep = songs[0]
+            tile = {
+                "artist_img": rep.get("latest_measurement", {}).get("artist_image", ""),
+                "artist_name": rep.get("artist_name", "Unbekannt"),
+                "artist_pop": rep.get("latest_measurement", {}).get("artist_pop", 0),
+                "monthly_listeners": rep.get("latest_measurement", {}).get("monthly_listeners", 0)
+            }
+            recent_tiles.append(tile)
+        if "recent_searches" not in st.session_state:
+            st.session_state.recent_searches = []
+        for tile in recent_tiles:
+            if tile not in st.session_state.recent_searches:
+                st.session_state.recent_searches.insert(0, tile)
+        st.session_state.recent_searches = st.session_state.recent_searches[:5]
+
+# Anzeige der "Zuletzt angesehen"-Sektion als 5-Spalten-Raster
+if "recent_searches" in st.session_state and st.session_state.recent_searches:
+    st.header("Zuletzt angesehen")
+    cols = st.columns(5)
+    for idx, tile in enumerate(st.session_state.recent_searches):
+        with cols[idx % 5]:
+            link = f"?search_query={tile['artist_name']}"
+            st.markdown(f"""
+            <a href="{link}" style="text-decoration: none; color: inherit;">
+                <div style="border: 2px solid #ffffff; border-radius: 8px; padding: 10px; background-color: #444444; text-align: center; cursor: pointer;">
+                    <img src="{tile['artist_img']}" alt="{tile['artist_name']}" style="width:120px; height:120px; border-radius:50%; object-fit:cover;">
+                    <h3 style="margin: 10px 0 5px 0;">{tile['artist_name']}</h3>
+                    <p style="margin: 0; color:#ffffff;">Popularity: {tile['artist_pop']}</p>
+                    <p style="margin: 0; color:#ffffff;">Monthly Listeners: {tile['monthly_listeners']}</p>
+                </div>
+            </a>
+            """, unsafe_allow_html=True)
+
 # Log- und Fortschrittscontainer ausblenden, falls keine Logmeldungen mehr vorhanden
 if not st.session_state.get("log_messages"):
     log_container.empty()
     progress_container.empty()
-
-#############################
-# Top 10 Artists To Watch
-#############################
-def get_top_10_artists_to_watch(songs_metadata):
-    artist_map = {}
-    for key, song in songs_metadata.items():
-        aid = song.get("artist_id") or song.get("artist_name")
-        if aid not in artist_map:
-            artist_map[aid] = song
-    def get_artist_score(s):
-        meas = s.get("measurements", [])
-        if len(meas) < 2:
-            return 0
-        sorted_ms = sorted(meas, key=lambda m: safe_timestamp(m))
-        return compute_artist_hype({"measurements": sorted_ms})
-    all_artists = list(artist_map.values())
-    all_artists.sort(key=lambda s: get_artist_score(s), reverse=True)
-    top_artists = [a for a in all_artists if get_artist_score(a) > 0]
-    return top_artists[:10]
-
-st.header("Top 10 Artists To Watch")
-top10 = get_top_10_artists_to_watch(songs_metadata)
-if not top10:
-    st.write("Aktuell keine Artists mit signifikantem Wachstum.")
-else:
-    for art in top10:
-        st.markdown(f"• {art.get('artist_name')} – Hype Score: {compute_artist_hype(art):.1f}")
-
